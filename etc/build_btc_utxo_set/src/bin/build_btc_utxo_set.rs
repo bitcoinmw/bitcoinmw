@@ -22,7 +22,6 @@ use bitcoin::util::address::Address;
 use serde_derive::{Deserialize, Serialize};
 use serde_json::Value::Null;
 use serde_json::{Error, Value};
-use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
 
@@ -69,7 +68,7 @@ fn main() {
 	//let address = Address::p2pkh(&public_key, network);
 	//println!("addr = {}", address);
 
-	let mut utxo_map: HashMap<String, Output> = HashMap::new();
+	//let mut utxo_map: HashMap<String, Output> = HashMap::new();
 
 	for i in 1..650000 {
 		let mut cmd = Command::new("bitcoin-cli")
@@ -142,9 +141,7 @@ fn main() {
 					if tx_id.is_some() && index.is_some() {
 						let tx_id = tx_id.unwrap().as_str().unwrap();
 						let index = index.unwrap();
-						let fmt = format!("{}-{}", tx_id, index);
-						utxo_map.remove(&fmt);
-						//println!("rem = {}", fmt);
+						println!("rem = {} {}", tx_id, index);
 					}
 					index_in = index_in + 1;
 				}
@@ -164,18 +161,11 @@ fn main() {
 						let script_pub_key = script_pub_key.unwrap();
 						let addresses = script_pub_key.get("addresses");
 						if addresses.is_some() {
-							let fmt = format!("{}-{}", tx_id, n);
 							let addresses = addresses.unwrap();
 							for address in addresses.as_array() {
 								for x in 0..address.len() {
 									let address = address[x].as_str().unwrap().to_string();
-									utxo_map.insert(
-										fmt.clone(),
-										Output {
-											value: value.clone(),
-											address: address.clone(),
-										},
-									);
+									println!("val = {} {} {} {}",address,tx_id,n,value);
 								}
 							}
 						} else {
@@ -187,14 +177,7 @@ fn main() {
 								let hex = hex::decode(vec[0]).unwrap();
 								let public_key = bitcoin::PublicKey::from_slice(&hex).unwrap();
 								let address = Address::p2pkh(&public_key, network).to_string();
-								let fmt = format!("{}-{}", tx_id, n);
-								utxo_map.insert(
-									fmt.clone(),
-									Output {
-										value: value.clone(),
-										address: address.clone(),
-									},
-								);
+								println!("val = {} {} {} {}",address,tx_id,n,value);
 							}
 						}
 					}
@@ -207,5 +190,4 @@ fn main() {
 		}
 	}
 
-	println!("complete: {:?}", utxo_map);
 }

@@ -67,7 +67,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 	let network = Network::Bitcoin;
 
-	std::fs::remove_file(outfile.clone())?;
+	let _ = std::fs::remove_file(outfile.clone());
 	let mut file = OpenOptions::new().write(true).create(true).open(outfile)?;
 
 	for i in 1..max_height {

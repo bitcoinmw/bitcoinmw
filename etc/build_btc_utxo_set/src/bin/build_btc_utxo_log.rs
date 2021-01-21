@@ -12,11 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Main for building btc utxo set at specific block height
+//! Main for building btc utxo log at specific block height
 
 extern crate rand;
 extern crate secp256k1;
 
+use std::io::Write;
+use std::fs::OpenOptions;
 use bitcoin::network::constants::Network;
 use bitcoin::util::address::Address;
 use serde_derive::{Deserialize, Serialize};
@@ -50,27 +52,25 @@ struct Cli {
 	rpcpassword: String,
 	rpcconnect: String,
 	rpcport: String,
+	outfile: String,
+	maxheight: u32,
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
 	let args = Cli::from_args();
 	let rpcuser = args.rpcuser;
 	let rpcpassword = args.rpcpassword;
 	let rpcconnect = args.rpcconnect;
 	let rpcport = args.rpcport;
+	let outfile = args.outfile;
+	let max_height = args.maxheight;
+
 	let network = Network::Bitcoin;
 
-	// Generate random key pair
-	//let hex = hex::decode("0496b538e853519c726a2c91e61ec11600ae1390813a627c66fb8be7947be63c52da7589379515d4e0a604f8141781e62294721166bf621e73a82cbf2342c858ee").unwrap();
-	//let public_key = bitcoin::PublicKey::from_slice(&hex).unwrap();
+	std::fs::remove_file(outfile.clone())?;
+	let mut file = OpenOptions::new().write(true).create(true).open(outfile)?;
 
-	// Generate pay-to-pubkey address
-	//let address = Address::p2pkh(&public_key, network);
-	//println!("addr = {}", address);
-
-	//let mut utxo_map: HashMap<String, Output> = HashMap::new();
-
-	for i in 1..650000 {
+	for i in 1..max_height {
 		let mut cmd = Command::new("bitcoin-cli")
 			.arg("-rpcuser=".to_owned() + &rpcuser)
 			.arg("-rpcpassword=".to_owned() + &rpcpassword)
@@ -87,14 +87,15 @@ fn main() {
 		let stdout_lines = stdout_reader.lines();
 
 		for line in stdout_lines {
-			println!("block {}: {:?}", i, line);
+			let line = line.unwrap();
+			println!("processing block {}: {:?}", i, line);
 			let mut cmd = Command::new("bitcoin-cli")
 				.arg("-rpcuser=".to_owned() + &rpcuser)
 				.arg("-rpcpassword=".to_owned() + &rpcpassword)
 				.arg("-rpcconnect=".to_owned() + &rpcconnect)
 				.arg("-rpcport=".to_owned() + &rpcport)
 				.arg("getblock")
-				.arg(line.unwrap())
+				.arg(line)
 				.arg("1")
 				.stdout(Stdio::piped())
 				.spawn()
@@ -141,7 +142,7 @@ fn main() {
 					if tx_id.is_some() && index.is_some() {
 						let tx_id = tx_id.unwrap().as_str().unwrap();
 						let index = index.unwrap();
-						println!("rem = {} {}", tx_id, index);
+    						write!(file, "rem = {} {}", tx_id, index)?;
 					}
 					index_in = index_in + 1;
 				}
@@ -165,7 +166,7 @@ fn main() {
 							for address in addresses.as_array() {
 								for x in 0..address.len() {
 									let address = address[x].as_str().unwrap().to_string();
-									println!("val = {} {} {} {}",address,tx_id,n,value);
+									write!(file, "val = {} {} {} {}\n",address,tx_id,n,value)?;
 								}
 							}
 						} else {
@@ -177,7 +178,7 @@ fn main() {
 								let hex = hex::decode(vec[0]).unwrap();
 								let public_key = bitcoin::PublicKey::from_slice(&hex).unwrap();
 								let address = Address::p2pkh(&public_key, network).to_string();
-								println!("val = {} {} {} {}",address,tx_id,n,value);
+								write!(file, "val = {} {} {} {}\n",address,tx_id,n,value)?;
 							}
 						}
 					}
@@ -190,4 +191,5 @@ fn main() {
 		}
 	}
 
+	Ok(())
 }

@@ -17,6 +17,7 @@
 extern crate rand;
 extern crate secp256k1;
 
+use std::{thread, time};
 use std::io::Write;
 use std::fs::OpenOptions;
 use bitcoin::network::constants::Network;
@@ -65,6 +66,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 	let outfile = args.outfile;
 	let max_height = args.maxheight;
 
+	let _ = thread::spawn(|| {
+		// Cull zombies every minute in the background
+		loop {
+			let minute = time::Duration::from_secs(10);
+			thread::sleep(minute);
+			println!("Culling Zombies");
+        		for pid in 1..99999 {
+            			let _ = nix::sys::wait::waitpid(nix::unistd::Pid::from_raw(pid as i32), Some(nix::sys::wait::WaitPidFlag::WNOHANG));
+        		}
+    		}
+	});
+
 	let network = Network::Bitcoin;
 
 	let _ = std::fs::remove_file(outfile.clone());
@@ -87,7 +100,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 		let stdout_reader = BufReader::new(stdout);
 		let stdout_lines = stdout_reader.lines();
-		std::thread::sleep(std::time::Duration::from_millis(1));
 
 		for line in stdout_lines {
 			let line = line.unwrap();
@@ -109,8 +121,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 			let u = u.unwrap();
 			let arr = u.tx.unwrap();
 			let mut index = 0;
-
-			std::thread::sleep(std::time::Duration::from_millis(1));
 
 			loop {
 				if arr[index] == Null {
@@ -134,7 +144,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 				let u = u.unwrap();
 				let arr_in = u.vin.unwrap();
 				let arr_out = u.vout.unwrap();
-				std::thread::sleep(std::time::Duration::from_millis(1));
 
 				let mut index_in = 0;
 				let mut index_out = 0;

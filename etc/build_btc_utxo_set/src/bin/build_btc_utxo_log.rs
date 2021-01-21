@@ -82,6 +82,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 			.spawn()
 			.expect("bitcoin-cli command failed to start");
 
+		let _ = cmd.wait_with_output().expect("failed to wait on child");
+
 		let stdout = cmd.stdout.as_mut().unwrap();
 		let stdout_reader = BufReader::new(stdout);
 		let stdout_lines = stdout_reader.lines();
@@ -100,6 +102,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 				.stdout(Stdio::piped())
 				.spawn()
 				.expect("bitcoin-cli command failed to start");
+
+			let _ = cmd.wait_with_output().expect("failed to wait on child");
 
 			let stdout = cmd.stdout.as_mut().unwrap();
 			let u: Result<BtcBlock, Error> = serde_json::from_reader(stdout);
@@ -122,6 +126,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 					.stdout(Stdio::piped())
 					.spawn()
 					.expect("bitcoin-cli command failed to start");
+
+				let _ = cmd.wait_with_output().expect("failed to wait on child");
 
 				let stdout = cmd.stdout.as_mut().unwrap();
 				let u: Result<BtcTransaction, Error> = serde_json::from_reader(stdout);

@@ -82,11 +82,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 			.spawn()
 			.expect("bitcoin-cli command failed to start");
 
-		let _ = cmd.wait_with_output().expect("failed to wait on child");
 
 		let stdout = cmd.stdout.as_mut().unwrap();
+
 		let stdout_reader = BufReader::new(stdout);
 		let stdout_lines = stdout_reader.lines();
+		std::thread::sleep(std::time::Duration::from_millis(1));
 
 		for line in stdout_lines {
 			let line = line.unwrap();
@@ -103,13 +104,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 				.spawn()
 				.expect("bitcoin-cli command failed to start");
 
-			let _ = cmd.wait_with_output().expect("failed to wait on child");
-
 			let stdout = cmd.stdout.as_mut().unwrap();
 			let u: Result<BtcBlock, Error> = serde_json::from_reader(stdout);
 			let u = u.unwrap();
 			let arr = u.tx.unwrap();
 			let mut index = 0;
+
+			std::thread::sleep(std::time::Duration::from_millis(1));
+
 			loop {
 				if arr[index] == Null {
 					break;
@@ -127,13 +129,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 					.spawn()
 					.expect("bitcoin-cli command failed to start");
 
-				let _ = cmd.wait_with_output().expect("failed to wait on child");
-
 				let stdout = cmd.stdout.as_mut().unwrap();
 				let u: Result<BtcTransaction, Error> = serde_json::from_reader(stdout);
 				let u = u.unwrap();
 				let arr_in = u.vin.unwrap();
 				let arr_out = u.vout.unwrap();
+				std::thread::sleep(std::time::Duration::from_millis(1));
 
 				let mut index_in = 0;
 				let mut index_out = 0;

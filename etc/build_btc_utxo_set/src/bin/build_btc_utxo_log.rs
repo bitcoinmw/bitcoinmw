@@ -18,7 +18,6 @@ extern crate rand;
 extern crate secp256k1;
 extern crate libc;
 
-use libc::{kill, SIGTERM};
 use std::io::Write;
 use std::fs::OpenOptions;
 use bitcoin::network::constants::Network;
@@ -84,7 +83,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 			.spawn()
 			.expect("bitcoin-cli command failed to start");
 
-		let id = cmd.id();
 		let stdout = cmd.stdout.as_mut().unwrap();
 
 		let stdout_reader = BufReader::new(stdout);
@@ -105,17 +103,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 				.spawn()
 				.expect("bitcoin-cli command failed to start");
 
-			let inner_id = inner_cmd.id();
-
 			let stdout = inner_cmd.stdout.as_mut().unwrap();
 			let u: Result<BtcBlock, Error> = serde_json::from_reader(stdout);
 			let u = u.unwrap();
 			let arr = u.tx.unwrap();
 			let mut index = 0;
-
-			unsafe {
-				kill(inner_id as i32, SIGTERM);
-			}
+			inner_cmd.wait()?;
 
 			loop {
 				if arr[index] == Null {
@@ -134,7 +127,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 					.spawn()
 					.expect("bitcoin-cli command failed to start");
 
-				let inner_inner_id = inner_inner_cmd.id();
 				let stdout = inner_inner_cmd.stdout.as_mut().unwrap();
 				let u: Result<BtcTransaction, Error> = serde_json::from_reader(stdout);
 				let u = u.unwrap();
@@ -143,10 +135,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 				let mut index_in = 0;
 				let mut index_out = 0;
-
-				unsafe {
-					kill(inner_inner_id as i32, SIGTERM);
-				}
+				inner_inner_cmd.wait()?;
 
 				loop {
 					if arr_in[index_in] == Null {
@@ -206,9 +195,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 			}
 		}
 
-		unsafe {
-                	kill(id as i32, SIGTERM);
-		}
+		cmd.wait()?;
 	}
 
 	Ok(())

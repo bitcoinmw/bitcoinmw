@@ -54,6 +54,8 @@ Andrew Poelstra for his related work and improvements.
 
 John Tromp for the Cuckoo Cycle proof of work.
 
+Ashli Babbitt we will never forget your sacrifice. 1/6. Uno Ab Alto.
+
 ## License
 
 Apache License v2.0.

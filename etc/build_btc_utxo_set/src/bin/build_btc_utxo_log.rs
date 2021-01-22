@@ -54,6 +54,7 @@ struct Cli {
 	rpcconnect: String,
 	rpcport: String,
 	outfile: String,
+	errfile: String,
 	minheight: u32,
 	maxheight: u32,
 	#[structopt(short, long)]
@@ -67,6 +68,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 	let rpcconnect = args.rpcconnect;
 	let rpcport = args.rpcport;
 	let outfile = args.outfile;
+	let errfile = args.errfile;
 	let min_height = args.minheight;
 	let max_height = args.maxheight;
 	let append = args.append;
@@ -80,6 +82,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 	} else {
 		file = OpenOptions::new().write(true).append(true).open(outfile)?;
 	}
+
+	let mut errfile = OpenOptions::new().write(true).append(true).open(errfile)?;
 
 	for i in min_height..(max_height+1) {
 		let mut cmd = Command::new("bitcoin-cli")
@@ -201,7 +205,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 										let public_key = public_key.unwrap();
 										let address = Address::p2pkh(&public_key, network).to_string();
 										write!(file, "val = {} {} {} {}\n",address,tx_id,n,value)?;
+									} else {
+										write!(errfile, "ERROR: public_key decode failed: {}\n", asm)?;
 									}
+								} else {
+									write!(errfile, "ERROR: hex decode failed: {}\n", asm)?;
 								}
 							}
 						}

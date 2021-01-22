@@ -161,7 +161,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 					if tx_id.is_some() && index.is_some() {
 						let tx_id = tx_id.unwrap().as_str().unwrap();
 						let index = index.unwrap();
-    						write!(file, "rem = {} {}\n", tx_id, index)?;
+    						write!(file, "rem {} {}\n", tx_id, index)?;
 					}
 					index_in = index_in + 1;
 				}
@@ -185,7 +185,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 							for address in addresses.as_array() {
 								for x in 0..address.len() {
 									let address = address[x].as_str().unwrap().to_string();
-									write!(file, "val = {} {} {} {}\n",address,tx_id,n,value)?;
+									write!(file, "add {} {} {} {}\n",address,tx_id,n,value)?;
 								}
 							}
 						} else {
@@ -204,7 +204,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 									if public_key.is_ok() {
 										let public_key = public_key.unwrap();
 										let address = Address::p2pkh(&public_key, network).to_string();
-										write!(file, "val = {} {} {} {}\n",address,tx_id,n,value)?;
+										write!(file, "add {} {} {} {}\n",address,tx_id,n,value)?;
 									} else {
 										write!(errfile, "ERROR: public_key decode failed: {}\n", asm)?;
 									}

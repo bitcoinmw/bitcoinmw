@@ -54,7 +54,10 @@ struct Cli {
 	rpcconnect: String,
 	rpcport: String,
 	outfile: String,
+	minheight: u32,
 	maxheight: u32,
+	#[structopt(short, long)]
+	append: bool,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -64,14 +67,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 	let rpcconnect = args.rpcconnect;
 	let rpcport = args.rpcport;
 	let outfile = args.outfile;
+	let min_height = args.minheight;
 	let max_height = args.maxheight;
+	let append = args.append;
 
 	let network = Network::Bitcoin;
 
-	let _ = std::fs::remove_file(outfile.clone());
-	let mut file = OpenOptions::new().write(true).create(true).open(outfile)?;
+	let mut file;
+	if ! append {
+		let _ = std::fs::remove_file(outfile.clone());
+		file = OpenOptions::new().write(true).create(true).open(outfile)?;
+	} else {
+		file = OpenOptions::new().write(true).append(true).open(outfile)?;
+	}
 
-	for i in 1..max_height {
+	for i in min_height..(max_height+1) {
 		let mut cmd = Command::new("bitcoin-cli")
 			.arg("-rpcuser=".to_owned() + &rpcuser)
 			.arg("-rpcpassword=".to_owned() + &rpcpassword)

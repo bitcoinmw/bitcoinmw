@@ -180,10 +180,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 								let asm = asm.unwrap();
 								let split = asm.as_str().unwrap().split(" ");
 								let vec: Vec<&str> = split.collect();
-								let hex = hex::decode(vec[0]).unwrap();
-								let public_key = bitcoin::PublicKey::from_slice(&hex).unwrap();
-								let address = Address::p2pkh(&public_key, network).to_string();
-								write!(file, "val = {} {} {} {}\n",address,tx_id,n,value)?;
+								let hex = hex::decode(vec[0]);
+
+								// TODO: Handle errors which means things like OP_DUP, etc
+								if hex.is_ok() {
+									let hex = hex.unwrap();
+									let public_key = bitcoin::PublicKey::from_slice(&hex).unwrap();
+									let address = Address::p2pkh(&public_key, network).to_string();
+									write!(file, "val = {} {} {} {}\n",address,tx_id,n,value)?;
+								}
 							}
 						}
 					}

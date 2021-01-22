@@ -83,7 +83,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 		file = OpenOptions::new().write(true).append(true).open(outfile)?;
 	}
 
-	let mut errfile = OpenOptions::new().write(true).append(true).open(errfile)?;
+	let mut errfile = OpenOptions::new().write(true).create(true).append(true).open(errfile)?;
 
 	for i in min_height..(max_height+1) {
 		let mut cmd = Command::new("bitcoin-cli")

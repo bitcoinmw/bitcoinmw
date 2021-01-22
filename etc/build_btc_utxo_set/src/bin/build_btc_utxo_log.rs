@@ -16,8 +16,9 @@
 
 extern crate rand;
 extern crate secp256k1;
+extern crate libc;
 
-use std::{thread, time};
+use libc::{kill, SIGTERM};
 use std::io::Write;
 use std::fs::OpenOptions;
 use bitcoin::network::constants::Network;
@@ -66,18 +67,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 	let outfile = args.outfile;
 	let max_height = args.maxheight;
 
-	let _ = thread::spawn(|| {
-		// Cull zombies every minute in the background
-		loop {
-			let minute = time::Duration::from_secs(10);
-			thread::sleep(minute);
-			println!("Culling Zombies");
-        		for pid in 1..99999 {
-            			let _ = nix::sys::wait::waitpid(nix::unistd::Pid::from_raw(pid as i32), Some(nix::sys::wait::WaitPidFlag::WNOHANG));
-        		}
-    		}
-	});
-
 	let network = Network::Bitcoin;
 
 	let _ = std::fs::remove_file(outfile.clone());
@@ -95,7 +84,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 			.spawn()
 			.expect("bitcoin-cli command failed to start");
 
-
+		let id = cmd.id();
 		let stdout = cmd.stdout.as_mut().unwrap();
 
 		let stdout_reader = BufReader::new(stdout);
@@ -104,7 +93,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 		for line in stdout_lines {
 			let line = line.unwrap();
 			println!("processing block {}: {:?}", i, line);
-			let mut cmd = Command::new("bitcoin-cli")
+			let mut inner_cmd = Command::new("bitcoin-cli")
 				.arg("-rpcuser=".to_owned() + &rpcuser)
 				.arg("-rpcpassword=".to_owned() + &rpcpassword)
 				.arg("-rpcconnect=".to_owned() + &rpcconnect)
@@ -116,18 +105,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 				.spawn()
 				.expect("bitcoin-cli command failed to start");
 
-			let stdout = cmd.stdout.as_mut().unwrap();
+			let inner_id = inner_cmd.id();
+
+			let stdout = inner_cmd.stdout.as_mut().unwrap();
 			let u: Result<BtcBlock, Error> = serde_json::from_reader(stdout);
 			let u = u.unwrap();
 			let arr = u.tx.unwrap();
 			let mut index = 0;
+
+			unsafe {
+				kill(inner_id as i32, SIGTERM);
+			}
 
 			loop {
 				if arr[index] == Null {
 					break;
 				}
 				let tx_id = &arr[index];
-				let mut cmd = Command::new("bitcoin-cli")
+				let mut inner_inner_cmd = Command::new("bitcoin-cli")
 					.arg("-rpcuser=".to_owned() + &rpcuser)
 					.arg("-rpcpassword=".to_owned() + &rpcpassword)
 					.arg("-rpcconnect=".to_owned() + &rpcconnect)
@@ -139,7 +134,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 					.spawn()
 					.expect("bitcoin-cli command failed to start");
 
-				let stdout = cmd.stdout.as_mut().unwrap();
+				let inner_inner_id = inner_inner_cmd.id();
+				let stdout = inner_inner_cmd.stdout.as_mut().unwrap();
 				let u: Result<BtcTransaction, Error> = serde_json::from_reader(stdout);
 				let u = u.unwrap();
 				let arr_in = u.vin.unwrap();
@@ -147,6 +143,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 				let mut index_in = 0;
 				let mut index_out = 0;
+
+				unsafe {
+					kill(inner_inner_id as i32, SIGTERM);
+				}
 
 				loop {
 					if arr_in[index_in] == Null {
@@ -204,6 +204,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 				index = index + 1;
 			}
+		}
+
+		unsafe {
+                	kill(id as i32, SIGTERM);
 		}
 	}
 

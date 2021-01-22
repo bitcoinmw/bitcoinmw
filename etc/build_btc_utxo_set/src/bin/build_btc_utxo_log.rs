@@ -147,7 +147,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 					if tx_id.is_some() && index.is_some() {
 						let tx_id = tx_id.unwrap().as_str().unwrap();
 						let index = index.unwrap();
-    						write!(file, "rem = {} {}", tx_id, index)?;
+    						write!(file, "rem = {} {}\n", tx_id, index)?;
 					}
 					index_in = index_in + 1;
 				}

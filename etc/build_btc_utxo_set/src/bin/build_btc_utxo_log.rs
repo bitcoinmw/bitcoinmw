@@ -185,9 +185,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 								// TODO: Handle errors which means things like OP_DUP, etc
 								if hex.is_ok() {
 									let hex = hex.unwrap();
-									let public_key = bitcoin::PublicKey::from_slice(&hex).unwrap();
-									let address = Address::p2pkh(&public_key, network).to_string();
-									write!(file, "val = {} {} {} {}\n",address,tx_id,n,value)?;
+									let public_key = bitcoin::PublicKey::from_slice(&hex);
+									// TODO: Handle these errors later.
+									if public_key.is_ok() {
+										let public_key = public_key.unwrap();
+										let address = Address::p2pkh(&public_key, network).to_string();
+										write!(file, "val = {} {} {} {}\n",address,tx_id,n,value)?;
+									}
 								}
 							}
 						}

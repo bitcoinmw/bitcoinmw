@@ -1,0 +1,20 @@
+[package]
+name = "build_btc_utxo_set"
+version = "0.0.1"
+edition = "2018"
+authors = ["BitcoinMW Developers <bitcoinmw@protonmail.com>"]
+description = "Utility to create the initial UTXO Set from Bitcoin Core"
+license = "Apache-2.0"
+repository = "https://github.com/bitcoinmw/bitcoinmw"
+keywords = [ "crypto", "mimblewimble", "bitcoin"]
+readme = "README.md"
+
+[[bin]]
+name = "gen_bin"
+path = "src/bin/build_btc_utxo_bin.rs"
+
+[dependencies]
+structopt = { version = "0.3", default-features = false }
+
+[dependencies.hex]
+version = "=0.3.2"

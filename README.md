@@ -52,7 +52,7 @@ Tom Elvis Jedusor for the first formulation of Mimblewimble.
 
 Andrew Poelstra for his related work and improvements.
 
-John Tromp for the Cuckoo Cycle proof of work.
+J.K. Rowling for making it despite extraordinary adversity.
 
 Ashli Babbitt we will never forget your sacrifice. 1/6. Uno Ab Alto.
 

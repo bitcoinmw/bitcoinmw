@@ -5,6 +5,8 @@ use crate::types::Error;
 use bech32::u5;
 use bech32::ToBase32;
 use bech32::WriteBase32;
+use bitcoin_hashes::sha256d;
+use bitcoin_hashes::Hash;
 use byteorder::{LittleEndian, ReadBytesExt};
 use rust_base58::ToBase58;
 use std::borrow::Cow;
@@ -15,9 +17,9 @@ use std::io::Cursor;
 use std::io::Read;
 use std::path::Path;
 
-const FLAG_LEGACY_ADDRESS: u64 = 0x8000000000000000;
-const FLAG_P2SH_ADDRESS: u64 = 0x4000000000000000;
-const FLAG_BECH32_ADDRESS: u64 = 0x2000000000000000;
+const FLAG_LEGACY_ADDRESS: u64 = 0x800000000000;
+const FLAG_P2SH_ADDRESS: u64 = 0x400000000000;
+const FLAG_BECH32_ADDRESS: u64 = 0x200000000000;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Case {
@@ -27,7 +29,10 @@ enum Case {
 }
 
 fn get_address(byte_data: Vec<u8>) -> Result<String, String> {
-	let byte_data = &byte_data[..25];
+	let byte_data = &byte_data[..21];
+	let checksum = sha256d::Hash::hash(&byte_data);
+	let mut byte_data = byte_data.to_vec();
+	byte_data.append(&mut checksum[0..4].to_vec());
 	Ok(byte_data.to_base58())
 }
 
@@ -117,7 +122,7 @@ pub fn load_binary(binary: &str) -> Result<UtxoData, Error> {
 	let mut map: HashMap<u32, AddressInfo> = HashMap::new();
 
 	let mut f = File::open(&binary).expect("no file found");
-	let mut buffer = vec![0; 32];
+	let mut buffer = vec![0; 26];
 
 	let mut count = 0;
 	loop {
@@ -133,20 +138,22 @@ pub fn load_binary(binary: &str) -> Result<UtxoData, Error> {
 			break;
 		}
 
-		let buffer2 = &buffer[24..];
+		let buffer2 = &buffer[20..];
+		let mut buffer2 = buffer2.to_vec();
+		buffer2.append(&mut vec![0x0, 0x0]);
 		let mut rdr = Cursor::new(buffer2);
 		let mut sats = rdr.read_u64::<LittleEndian>().unwrap();
 
 		let address = if sats & FLAG_LEGACY_ADDRESS != 0 {
-			let mut prefixed = [0; 25];
+			let mut prefixed = [0; 21];
 			prefixed[0] = 0x00;
-			prefixed[1..].copy_from_slice(&buffer[..24]);
+			prefixed[1..].copy_from_slice(&buffer[..20]);
 			let ret = get_address(prefixed.to_vec()).unwrap();
 			ret
 		} else if sats & FLAG_P2SH_ADDRESS != 0 {
-			let mut prefixed = [0; 25];
+			let mut prefixed = [0; 21];
 			prefixed[0] = 0x05;
-			prefixed[1..].copy_from_slice(&buffer[..24]);
+			prefixed[1..].copy_from_slice(&buffer[..20]);
 			let ret = get_address(prefixed.to_vec()).unwrap();
 			ret
 		} else if sats & FLAG_BECH32_ADDRESS != 0 {
@@ -174,6 +181,5 @@ pub fn load_binary(binary: &str) -> Result<UtxoData, Error> {
 	}
 
 	let ret = UtxoData { map: map };
-
 	Ok(ret)
 }

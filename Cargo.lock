@@ -180,10 +180,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5f0dc55f2d8a1a85650ac47858bb001b4c0dd73d79e3c455a842925e68d29cd3"
 
 [[package]]
+name = "bitcoin_hashes"
+version = "0.9.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0aaf87b776808e26ae93289bc7d025092b6d909c193f0cdee0b3a86e7bd3c776"
+
+[[package]]
 name = "bitcoinmw_loader"
 version = "5.1.0-alpha.1"
 dependencies = [
  "bech32",
+ "bitcoin_hashes",
  "byteorder",
  "log",
  "rust-base58",

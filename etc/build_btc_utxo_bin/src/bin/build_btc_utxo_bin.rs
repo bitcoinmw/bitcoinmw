@@ -30,9 +30,9 @@ use std::io::{BufRead, BufReader};
 use std::mem;
 use structopt::StructOpt;
 
-const FLAG_LEGACY_ADDRESS: u64 = 0x8000000000000000;
-const FLAG_P2SH_ADDRESS: u64 = 0x4000000000000000;
-const FLAG_BECH32_ADDRESS: u64 = 0x2000000000000000;
+const FLAG_LEGACY_ADDRESS: u64 = 0x800000000000;
+const FLAG_P2SH_ADDRESS: u64 = 0x400000000000;
+const FLAG_BECH32_ADDRESS: u64 = 0x200000000000;
 
 #[derive(StructOpt, Debug)]
 struct Cli {
@@ -166,8 +166,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 		let encoded_value = encode_value(*value, flag);
 		sortable.push(SortableValue {
 			address: key.to_string(),
-			address_enc: encoded_addr,
-			value_enc: encoded_value,
+			address_enc: encoded_addr[0..20].to_vec(),
+			value_enc: encoded_value[0..6].to_vec(),
 		});
 	}
 

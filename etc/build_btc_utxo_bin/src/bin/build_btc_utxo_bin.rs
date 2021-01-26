@@ -46,6 +46,13 @@ struct OutputValue {
 	value: f64,
 }
 
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct SortableValue {
+	address: String,
+	address_enc: Vec<u8>,
+	value_enc: Vec<u8>,
+}
+
 fn from_base58(encoded: &str) -> Result<Vec<u8>, String> {
 	let mut ret = encoded.from_base58().unwrap();
 	ret.remove(0);
@@ -145,9 +152,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 	let mut buffer = BufWriter::new(File::create(outfile)?);
 
+	let mut sortable = Vec::new();
 	for (key, value) in &addr_map {
 		let encoded_addr = encode_addr(key.to_string());
-		buffer.write_all(&encoded_addr)?;
 
 		let flag = match key.chars().next() {
 			Some('1') => FLAG_LEGACY_ADDRESS,
@@ -157,7 +164,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 		};
 
 		let encoded_value = encode_value(*value, flag);
-		buffer.write_all(&encoded_value)?;
+		sortable.push(SortableValue {
+			address: key.to_string(),
+			address_enc: encoded_addr,
+			value_enc: encoded_value,
+		});
+	}
+
+	sortable.sort();
+
+	for s in sortable {
+		buffer.write_all(&s.address_enc)?;
+		buffer.write_all(&s.value_enc)?;
 	}
 
 	buffer.flush()?;

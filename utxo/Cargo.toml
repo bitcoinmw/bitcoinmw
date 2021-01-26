@@ -1,0 +1,18 @@
+[package]
+name = "bitcoinmw_loader"
+version = "5.1.0-alpha.1"
+authors = ["BitcoinMW Developers <bitcoinmw@protonmail.com>"]
+description = "Chain implementation for grin, a simple, private and scalable cryptocurrency implementation based on the Mimblewimble chain format."
+license = "Apache-2.0"
+repository = "https://github.com/bitcoinmw/bitcoinmw"
+keywords = [ "crypto", "grin", "mimblewimble", "bitcoinmw" ]
+workspace = ".."
+edition = "2018"
+
+[dependencies]
+byteorder = { version = "1.4.2" }
+rust-base58 = { version = "0.0.4" }
+bech32 = { version = "0.7.2" }
+log = { version = "0.4" }
+
+[dev-dependencies]

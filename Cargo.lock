@@ -144,6 +144,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "53d1ccbaf7d9ec9537465a97bf19edc1a4e158ecb49fc16178202238c569cc42"
 
 [[package]]
+name = "bech32"
+version = "0.7.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cdcf67bb7ba7797a081cd19009948ab533af7c355d5caf1d08c777582d351e9c"
+
+[[package]]
 name = "bindgen"
 version = "0.52.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -172,6 +178,16 @@ name = "bit-vec"
 version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5f0dc55f2d8a1a85650ac47858bb001b4c0dd73d79e3c455a842925e68d29cd3"
+
+[[package]]
+name = "bitcoinmw_loader"
+version = "5.1.0-alpha.1"
+dependencies = [
+ "bech32",
+ "byteorder",
+ "log",
+ "rust-base58",
+]
 
 [[package]]
 name = "bitflags"
@@ -240,9 +256,9 @@ checksum = "560c32574a12a89ecd91f5e742165893f86e3ab98d21f8ea548658eb9eef5f40"
 
 [[package]]
 name = "byteorder"
-version = "1.3.4"
+version = "1.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "08c48aae112d48ed9f069b33538ea9e3e90aa263cfa3d1c24309612b1f7472de"
+checksum = "ae44d1a3d5a19df61dd0c8beb138458ac2a53a7ac09eba97d55592540004306b"
 
 [[package]]
 name = "bytes"
@@ -924,6 +940,7 @@ checksum = "9b919933a397b79c37e33b77bb2aa3dc8eb6e165ad809e58ff75bc7db2e34574"
 name = "grin"
 version = "5.1.0-alpha.1"
 dependencies = [
+ "bitcoinmw_loader",
  "blake2-rfc",
  "built",
  "chrono",
@@ -1129,6 +1146,7 @@ dependencies = [
 name = "grin_servers"
 version = "5.1.0-alpha.1"
 dependencies = [
+ "bitcoinmw_loader",
  "chrono",
  "fs2",
  "futures 0.3.5",
@@ -2306,6 +2324,15 @@ dependencies = [
  "blake2b_simd",
  "constant_time_eq",
  "crossbeam-utils",
+]
+
+[[package]]
+name = "rust-base58"
+version = "0.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b313b91fcdc6719ad41fa2dad2b7e810b03833fae4bf911950e15529a5f04439"
+dependencies = [
+ "num",
 ]
 
 [[package]]

@@ -16,6 +16,8 @@ path = "src/bin/build_btc_utxo_bin.rs"
 [dependencies]
 structopt = { version = "0.3", default-features = false }
 byteorder = { version = "1.4.2" }
+rust-base58 = { version = "0.0.4" }
+bech32 = { version = "0.7.2" }
 
 [dependencies.hex]
 version = "=0.3.2"

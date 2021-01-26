@@ -12,7 +12,7 @@ build = "src/build/build.rs"
 edition = "2018"
 
 [workspace]
-members = ["api", "chain", "config", "core", "keychain", "p2p", "servers", "store", "util", "pool"]
+members = ["api", "chain", "config", "core", "keychain", "p2p", "servers", "store", "util", "pool", "utxo"]
 exclude = ["etc/gen_gen", "etc/build_btc_utxo_log", "etc/build_btc_utxo_bin"]
 
 [[bin]]
@@ -40,6 +40,8 @@ grin_keychain = { path = "./keychain", version = "5.1.0-alpha.1" }
 grin_p2p = { path = "./p2p", version = "5.1.0-alpha.1" }
 grin_servers = { path = "./servers", version = "5.1.0-alpha.1" }
 grin_util = { path = "./util", version = "5.1.0-alpha.1" }
+bitcoinmw_loader = { path = "./utxo", version = "5.1.0-alpha.1" }
+
 
 [dependencies.cursive]
 version = "0.15"

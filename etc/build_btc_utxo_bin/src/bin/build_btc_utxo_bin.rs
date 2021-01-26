@@ -14,17 +14,25 @@
 
 //! Main for building btc utxo log at specific block height
 
+extern crate bech32;
 extern crate byteorder;
+extern crate rust_base58;
 
+use bech32::u5;
+use bech32::FromBase32;
 use byteorder::{LittleEndian, WriteBytesExt};
+use rust_base58::FromBase58;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufWriter;
 use std::io::Write;
 use std::io::{BufRead, BufReader};
 use std::mem;
-
 use structopt::StructOpt;
+
+const FLAG_LEGACY_ADDRESS: u64 = 0x8000000000000000;
+const FLAG_P2SH_ADDRESS: u64 = 0x4000000000000000;
+const FLAG_BECH32_ADDRESS: u64 = 0x2000000000000000;
 
 #[derive(StructOpt, Debug)]
 struct Cli {
@@ -38,56 +46,25 @@ struct OutputValue {
 	value: f64,
 }
 
-const DIGITS58: [char; 58] = [
-	'1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'J', 'K',
-	'L', 'M', 'N', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z', 'a', 'b', 'c', 'd', 'e',
-	'f', 'g', 'h', 'i', 'j', 'k', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y',
-	'z',
-];
-
-fn from_base58(encoded: &str, size: usize) -> Result<Vec<u8>, String> {
-	let mut res: Vec<u8> = vec![0; size];
-	for base58_value in encoded.chars() {
-		let mut value: u32 = match DIGITS58.iter().position(|x| *x == base58_value) {
-			Some(x) => x as u32,
-			None => return Err(String::from("Invalid character found in encoded string.")),
-		};
-		for result_index in (0..size).rev() {
-			value += 58 * res[result_index] as u32;
-			res[result_index] = (value % 256) as u8;
-			value /= 256;
-		}
-	}
-	Ok(res)
+fn from_base58(encoded: &str) -> Result<Vec<u8>, String> {
+	let mut ret = encoded.from_base58().unwrap();
+	ret.remove(0);
+	Ok(ret)
 }
 
-const DIGITS32: [char; 32] = [
-	'q', 'p', 'z', 'r', 'y', '9', 'x', '8', 'g', 'f', '2', 't', 'v', 'd', 'w', '0', 's', '3', 'j',
-	'n', '5', '4', 'k', 'h', 'c', 'e', '6', 'm', 'u', 'a', '7', 'l',
-];
-
-fn from_base32(encoded: &str, size: usize) -> Result<Vec<u8>, String> {
-	let encoded = &encoded[4..];
-	let mut res: Vec<u8> = vec![0; size];
-
-	for base32_value in encoded.chars() {
-		let mut value: u32 = match DIGITS32.iter().position(|x| *x == base32_value) {
-			Some(x) => x as u32,
-			None => return Err(String::from("Invalid character found in encoded string.")),
-		};
-		for result_index in (0..size).rev() {
-			value += 32 * res[result_index] as u32;
-			res[result_index] = (value % 256) as u8;
-			value /= 256;
-		}
-	}
-	Ok(res)
+fn from_base32(encoded: &str) -> Result<Vec<u8>, String> {
+	let mut padded = [u5::try_from_u8(0).unwrap(); 32];
+	let (_, data) = bech32::decode(&encoded).unwrap();
+	padded[..32].copy_from_slice(&data[1..]);
+	let mut ret = Vec::<u8>::from_base32(&padded).unwrap();
+	ret.append(&mut vec![0 as u8, 0 as u8, 0 as u8, 0 as u8]);
+	Ok(ret)
 }
 
-fn encode_value(value: f64) -> Vec<u8> {
+fn encode_value(value: f64, flag: u64) -> Vec<u8> {
 	// convert to sats
 	let nval: f64 = value * 100_000_000 as f64;
-	let nval: u64 = nval.round() as u64;
+	let nval: u64 = (nval.round() as u64) | flag;
 
 	let mut ret = [0u8; mem::size_of::<u64>()];
 
@@ -100,11 +77,11 @@ fn encode_value(value: f64) -> Vec<u8> {
 
 fn encode_addr(address: String) -> Vec<u8> {
 	if address.starts_with("1") {
-		return from_base58(&address, 25).unwrap();
+		return from_base58(&address).unwrap();
 	} else if address.starts_with("3") {
-		return from_base58(&address, 25).unwrap();
+		return from_base58(&address).unwrap();
 	} else if address.starts_with("b") {
-		return from_base32(&address, 25).unwrap();
+		return from_base32(&address).unwrap();
 	}
 	println!("WARNING: Unknown address type: {}", address);
 	return vec![0; 1];
@@ -170,8 +147,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 	for (key, value) in &addr_map {
 		let encoded_addr = encode_addr(key.to_string());
-		buffer.write_all(&encoded_addr[1..])?;
-		let encoded_value = encode_value(*value);
+		buffer.write_all(&encoded_addr)?;
+
+		let flag = match key.chars().next() {
+			Some('1') => FLAG_LEGACY_ADDRESS,
+			Some('3') => FLAG_P2SH_ADDRESS,
+			Some('b') => FLAG_BECH32_ADDRESS,
+			_ => FLAG_BECH32_ADDRESS,
+		};
+
+		let encoded_value = encode_value(*value, flag);
 		buffer.write_all(&encoded_value)?;
 	}
 

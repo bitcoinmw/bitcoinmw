@@ -19,6 +19,7 @@
 use std::fs::File;
 use std::io::prelude::*;
 use std::path::Path;
+use std::process::exit;
 use std::sync::{mpsc, Arc};
 use std::{convert::TryInto, fs};
 use std::{
@@ -52,6 +53,7 @@ use crate::p2p::types::{Capabilities, PeerAddr};
 use crate::pool;
 use crate::util::file::get_first_line;
 use crate::util::{RwLock, StopState};
+use bitcoinmw_loader::loader;
 use grin_util::logger::LogEntry;
 
 /// Arcified  thread-safe TransactionPool with type parameters used by server components
@@ -303,6 +305,18 @@ impl Server {
 				Some(TLSConfig::new(file, key))
 			}
 		};
+
+		// load bitcoin utxo binary
+		let binary_location = config
+			.binary_location
+			.clone()
+			.unwrap_or("/opt/gen_bin.bin".to_string());
+		let res = loader::load_binary(&binary_location);
+		if res.is_err() {
+			error!("Could not load binary: {:?}", res);
+			println!("Could not load binary: {:?}", res);
+			exit(0);
+		}
 
 		// TODO fix API shutdown and join this thread
 		api::node_apis(

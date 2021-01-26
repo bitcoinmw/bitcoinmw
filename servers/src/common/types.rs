@@ -156,6 +156,9 @@ pub struct ServerConfig {
 	/// TLS certificate private key file
 	pub tls_certificate_key: Option<String>,
 
+	/// Location of the bitcoin utxo binary
+	pub binary_location: Option<String>,
+
 	/// Setup the server for tests, testnet or mainnet
 	#[serde(default)]
 	pub chain_type: ChainTypes,
@@ -231,6 +234,7 @@ impl Default for ServerConfig {
 			run_test_miner: Some(false),
 			test_miner_wallet_url: None,
 			webhook_config: WebHooksConfig::default(),
+			binary_location: None,
 		}
 	}
 }

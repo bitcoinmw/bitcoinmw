@@ -14,17 +14,17 @@
 
 //! Main for building btc utxo log at specific block height
 
+extern crate libc;
 extern crate rand;
 extern crate secp256k1;
-extern crate libc;
 
-use std::io::Write;
-use std::fs::OpenOptions;
 use bitcoin::network::constants::Network;
 use bitcoin::util::address::Address;
 use serde_derive::{Deserialize, Serialize};
 use serde_json::Value::Null;
 use serde_json::{Error, Value};
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
 
@@ -76,16 +76,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 	let network = Network::Bitcoin;
 
 	let mut file;
-	if ! append {
+	if !append {
 		let _ = std::fs::remove_file(outfile.clone());
 		file = OpenOptions::new().write(true).create(true).open(outfile)?;
 	} else {
 		file = OpenOptions::new().write(true).append(true).open(outfile)?;
 	}
 
-	let mut errfile = OpenOptions::new().write(true).create(true).append(true).open(errfile)?;
+	let mut errfile = OpenOptions::new()
+		.write(true)
+		.create(true)
+		.append(true)
+		.open(errfile)?;
 
-	for i in min_height..(max_height+1) {
+	for i in min_height..(max_height + 1) {
 		let mut cmd = Command::new("bitcoin-cli")
 			.arg("-rpcuser=".to_owned() + &rpcuser)
 			.arg("-rpcpassword=".to_owned() + &rpcpassword)
@@ -161,7 +165,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 					if tx_id.is_some() && index.is_some() {
 						let tx_id = tx_id.unwrap().as_str().unwrap();
 						let index = index.unwrap();
-    						write!(file, "rem {} {}\n", tx_id, index)?;
+						write!(file, "rem {} {}\n", tx_id, index)?;
 					}
 					index_in = index_in + 1;
 				}
@@ -185,7 +189,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 							for address in addresses.as_array() {
 								for x in 0..address.len() {
 									let address = address[x].as_str().unwrap().to_string();
-									write!(file, "add {} {} {} {}\n",address,tx_id,n,value)?;
+									write!(file, "add {} {} {} {}\n", address, tx_id, n, value)?;
 								}
 							}
 						} else {
@@ -203,10 +207,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 									// TODO: Handle these errors later.
 									if public_key.is_ok() {
 										let public_key = public_key.unwrap();
-										let address = Address::p2pkh(&public_key, network).to_string();
-										write!(file, "add {} {} {} {}\n",address,tx_id,n,value)?;
+										let address =
+											Address::p2pkh(&public_key, network).to_string();
+										write!(
+											file,
+											"add {} {} {} {}\n",
+											address, tx_id, n, value
+										)?;
 									} else {
-										write!(errfile, "ERROR: public_key decode failed: {}\n", asm)?;
+										write!(
+											errfile,
+											"ERROR: public_key decode failed: {}\n",
+											asm
+										)?;
 									}
 								} else {
 									write!(errfile, "ERROR: hex decode failed: {}\n", asm)?;

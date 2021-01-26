@@ -45,6 +45,8 @@ fn comments() -> HashMap<String, String> {
 		"
 #path of TLS certificate file, self-signed certificates are not supported
 #tls_certificate_file = \"\"
+#location of bitcoin utxo binary
+#binary_location = \"\"
 #private key for the TLS certificate
 #tls_certificate_key = \"\"
 

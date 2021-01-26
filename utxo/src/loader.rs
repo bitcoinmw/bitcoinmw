@@ -116,7 +116,7 @@ pub fn load_binary(binary: &str) -> Result<UtxoData, Error> {
 	info!("loading binary at {}", binary);
 
 	if !Path::new(binary).exists() {
-		return Err(Error::FileNotFound);
+		return Err(Error::FileNotFound(binary.to_string()));
 	}
 
 	let mut map: HashMap<u32, AddressInfo> = HashMap::new();

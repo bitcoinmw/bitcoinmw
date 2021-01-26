@@ -1,6 +1,6 @@
 #[derive(Debug)]
 pub enum Error {
-	FileNotFound,
+	FileNotFound(String),
 	InvalidLength,
 	MixedCase,
 	InvalidChar(char),

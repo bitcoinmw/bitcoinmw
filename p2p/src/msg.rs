@@ -43,9 +43,9 @@ use std::sync::Arc;
 pub const USER_AGENT: &str = concat!("MW/Grin ", env!("CARGO_PKG_VERSION"));
 
 /// Magic numbers expected in the header of every message
-const OTHER_MAGIC: [u8; 2] = [73, 43];
-const TESTNET_MAGIC: [u8; 2] = [83, 59];
-const MAINNET_MAGIC: [u8; 2] = [97, 61];
+const OTHER_MAGIC: [u8; 2] = [79, 49];
+const TESTNET_MAGIC: [u8; 2] = [11, 11];
+const MAINNET_MAGIC: [u8; 2] = [1, 6];
 
 // Types of messages.
 // Note: Values here are *important* so we should only add new values at the

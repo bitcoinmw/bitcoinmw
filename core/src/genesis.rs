@@ -48,7 +48,7 @@ pub fn genesis_dev() -> core::Block {
 pub fn genesis_test() -> core::Block {
 	let gen = core::Block::with_header(core::BlockHeader {
 		height: 0,
-		timestamp: Utc.ymd(2018, 12, 28).and_hms(20, 48, 4),
+		timestamp: Utc.ymd(2020, 1, 6).and_hms(0, 0, 0),
 		prev_root: Hash::from_hex(
 			"00000000000000000017ff4903ef366c8f62e3151ba74e41b8332a126542f538",
 		)
@@ -160,7 +160,7 @@ pub fn genesis_test() -> core::Block {
 pub fn genesis_main() -> core::Block {
 	let gen = core::Block::with_header(core::BlockHeader {
 		height: 0,
-		timestamp: Utc.ymd(2019, 1, 15).and_hms(16, 1, 26),
+		timestamp: Utc.ymd(2021, 1, 6).and_hms(18, 0, 0),
 		prev_root: Hash::from_hex(
 			"0000000000000000002a8bc32f43277fe9c063b9c99ea252b483941dcd06e217",
 		)

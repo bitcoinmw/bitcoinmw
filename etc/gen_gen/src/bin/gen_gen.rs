@@ -14,6 +14,8 @@
 
 //! Main for building the genesis generation utility.
 
+use grin_core::libtx::proof;
+use grin_core::ser::ProtocolVersion;
 use std::io::{BufRead, Write};
 use std::sync::Arc;
 use std::{fs, io, path};
@@ -21,16 +23,13 @@ use std::{fs, io, path};
 use chrono::prelude::Utc;
 use chrono::{Datelike, Duration, Timelike};
 use curl;
-use rpassword;
 use serde_json;
 
 use cuckoo_miner as cuckoo;
 use grin_chain as chain;
 use grin_core as core;
 use grin_miner_plugin as plugin;
-use grin_store as store;
 use grin_util::{self as util, ToHex};
-use grin_wallet as wallet;
 
 use grin_core::core::hash::Hashed;
 use grin_core::core::verifier_cache::LruVerifierCache;
@@ -79,15 +78,11 @@ fn main() {
 	// build the basic parts of the genesis block header
 	let mut gen = core::genesis::genesis_main();
 
-	// build the wallet seed and derive a coinbase from local wallet.seed
-	let seed = wallet::WalletSeed::from_file(
-		&wallet::WalletConfig::default(),
-		&rpassword::prompt_password_stdout("Password: ").unwrap(),
-	)
-	.unwrap();
-	let keychain: ExtKeychain = seed.derive_keychain(false).unwrap();
+	let keychain: ExtKeychain = Keychain::from_random_seed(false).unwrap();
 	let key_id = ExtKeychain::derive_key_id(3, 1, 0, 0, 0);
-	let reward = core::libtx::reward::output(&keychain, &key_id, 0).unwrap();
+	let builder = proof::ProofBuilder::new(&keychain);
+	let reward = core::libtx::reward::output(&keychain, &builder, &key_id, 0, false).unwrap();
+
 	gen = gen.with_reward(reward.0, reward.1);
 
 	{
@@ -148,7 +143,7 @@ fn main() {
 	.unwrap();
 
 	println!("\nFinal genesis cyclehash: {}", gen.hash().to_hex());
-	let gen_bin = core::ser::ser_vec(&gen).unwrap();
+	let gen_bin = core::ser::ser_vec(&gen, ProtocolVersion(1)).unwrap();
 	println!("Final genesis full hash: {}\n", gen_bin.hash().to_hex());
 
 	update_genesis_rs(&gen);
@@ -230,7 +225,7 @@ fn update_genesis_rs(gen: &core::core::Block) {
 		"commit".to_string(),
 		format!(
 			"Commitment::from_vec(util::from_hex({:x?}.to_string()).unwrap())",
-			util::to_hex(gen.outputs()[0].commitment().0.to_vec())
+			gen.outputs()[0].commitment().0.to_vec().to_hex()
 		),
 	));
 	replacements.push((
@@ -272,16 +267,13 @@ fn setup_chain(dir_name: &str, genesis: core::core::Block) -> chain::Chain {
 	let verifier_cache = Arc::new(util::RwLock::new(
 		core::core::verifier_cache::LruVerifierCache::new(),
 	));
-	let db_env = Arc::new(store::new_env(dir_name.to_string()));
 	chain::Chain::init(
 		dir_name.to_string(),
-		db_env,
 		Arc::new(chain::types::NoopAdapter {}),
 		genesis,
 		core::pow::verify_size,
 		verifier_cache,
 		false,
-		Arc::new(util::StopState::new()),
 	)
 	.unwrap()
 }

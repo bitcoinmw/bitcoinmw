@@ -301,6 +301,16 @@ pub enum KernelFeatures {
 		/// Relative lock height.
 		relative_height: NRDRelativeHeight,
 	},
+	/// Initialization of a Bitcoin UTXO.
+	BitcoinInit {
+		/// These have fees.
+		#[serde(serialize_with = "fee_fields_as_int")]
+		fee: FeeFields,
+		/// Index into the UTXO data array
+		index: u32,
+		/// Signature of (excess, excess_sig, index, and fee) with btc key.
+		btc_sig: secp::Signature,
+	},
 }
 
 impl KernelFeatures {
@@ -308,6 +318,7 @@ impl KernelFeatures {
 	const COINBASE_U8: u8 = 1;
 	const HEIGHT_LOCKED_U8: u8 = 2;
 	const NO_RECENT_DUPLICATE_U8: u8 = 3;
+	const BITCOIN_INIT_U8: u8 = 4;
 
 	/// Underlying (u8) value representing this kernel variant.
 	/// This is the first byte when we serialize/deserialize the kernel features.
@@ -317,6 +328,7 @@ impl KernelFeatures {
 			KernelFeatures::Coinbase => KernelFeatures::COINBASE_U8,
 			KernelFeatures::HeightLocked { .. } => KernelFeatures::HEIGHT_LOCKED_U8,
 			KernelFeatures::NoRecentDuplicate { .. } => KernelFeatures::NO_RECENT_DUPLICATE_U8,
+			KernelFeatures::BitcoinInit { .. } => KernelFeatures::BITCOIN_INIT_U8,
 		}
 	}
 
@@ -327,6 +339,7 @@ impl KernelFeatures {
 			KernelFeatures::Coinbase => String::from("Coinbase"),
 			KernelFeatures::HeightLocked { .. } => String::from("HeightLocked"),
 			KernelFeatures::NoRecentDuplicate { .. } => String::from("NoRecentDuplicate"),
+			KernelFeatures::BitcoinInit { .. } => String::from("BitcoinInit"),
 		}
 	}
 
@@ -334,6 +347,7 @@ impl KernelFeatures {
 	///       hash(features || fee_fields)                    for plain kernels
 	///       hash(features || fee_fields || lock_height)     for height locked kernels
 	///       hash(features || fee_fields || relative_height) for NRD kernels
+	///       hash(features || fee_fields || index)           for BitcoinInit kernels
 	pub fn kernel_sig_msg(&self) -> Result<secp::Message, Error> {
 		let x = self.as_u8();
 		let hash = match self {
@@ -344,6 +358,7 @@ impl KernelFeatures {
 				fee,
 				relative_height,
 			} => (x, fee, relative_height).hash(),
+			KernelFeatures::BitcoinInit { fee, index, .. } => (x, fee, *index as u64).hash(), // TODO: fix up with other data for hashing
 		};
 
 		let msg = secp::Message::from_slice(&hash.as_bytes())?;
@@ -382,6 +397,10 @@ impl KernelFeatures {
 				writer.write_empty_bytes(6)?;
 				relative_height.write(writer)?;
 			}
+			_ => {
+				// note KernelFeatures::BITCOIN_INIT_U8 is an error in v1
+				return Err(ser::Error::CorruptedData);
+			}
 		};
 		Ok(())
 	}
@@ -412,6 +431,15 @@ impl KernelFeatures {
 				fee.write(writer)?;
 				// V2 NRD kernels use 2 bytes for the relative lock height.
 				relative_height.write(writer)?;
+			}
+			KernelFeatures::BitcoinInit {
+				fee,
+				index,
+				btc_sig,
+			} => {
+				fee.write(writer)?;
+				index.write(writer)?;
+				btc_sig.write(writer)?;
 			}
 		}
 		Ok(())
@@ -461,6 +489,7 @@ impl KernelFeatures {
 				}
 			}
 			_ => {
+				// note KernelFeatures::BITCOIN_INIT_U8 is an error in v1
 				return Err(ser::Error::CorruptedData);
 			}
 		};
@@ -492,6 +521,16 @@ impl KernelFeatures {
 				KernelFeatures::NoRecentDuplicate {
 					fee,
 					relative_height,
+				}
+			}
+			KernelFeatures::BITCOIN_INIT_U8 => {
+				let fee = FeeFields::read(reader)?;
+				let index = reader.read_u32()?;
+				let btc_sig = secp::Signature::read(reader)?;
+				KernelFeatures::BitcoinInit {
+					fee,
+					index,
+					btc_sig,
 				}
 			}
 			_ => {
@@ -1049,6 +1088,7 @@ impl TransactionBody {
 				KernelFeatures::Plain { fee } => Some(fee),
 				KernelFeatures::HeightLocked { fee, .. } => Some(fee),
 				KernelFeatures::NoRecentDuplicate { fee, .. } => Some(fee),
+				KernelFeatures::BitcoinInit { fee, .. } => Some(fee),
 			})
 			.fold(0, |acc, fee_fields| {
 				acc.saturating_add(fee_fields.fee(height))
@@ -1064,6 +1104,7 @@ impl TransactionBody {
 				KernelFeatures::Plain { fee } => Some(fee),
 				KernelFeatures::HeightLocked { fee, .. } => Some(fee),
 				KernelFeatures::NoRecentDuplicate { fee, .. } => Some(fee),
+				KernelFeatures::BitcoinInit { fee, .. } => Some(fee),
 			})
 			.fold(0, |acc, fee_fields| max(acc, fee_fields.fee_shift(height)))
 	}

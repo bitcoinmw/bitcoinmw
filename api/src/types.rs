@@ -518,6 +518,7 @@ impl TxKernelPrintable {
 				fee,
 				relative_height,
 			} => (fee, relative_height.into()),
+			KernelFeatures::BitcoinInit { fee, index, .. } => (fee, index as u64),
 		};
 		let height = 2 * YEAR_HEIGHT; // print as if post-HF4
 		let fee = fee_fields.fee(height);

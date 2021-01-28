@@ -2613,7 +2613,7 @@ mod test {
 
 		// Additional kernel features unsupported.
 		let mut vec = vec![];
-		ser::serialize_default(&mut vec, &(4u8)).expect("serialized failed");
+		ser::serialize_default(&mut vec, &(5u8)).expect("serialized failed");
 		let res: Result<KernelFeatures, _> = ser::deserialize_default(&mut &vec[..]);
 		assert_eq!(res.err(), Some(ser::Error::CorruptedData));
 
@@ -2648,9 +2648,9 @@ mod test {
 		let res: Result<KernelFeatures, _> = ser::deserialize_default(&mut &vec[..]);
 		assert_eq!(res.err(), Some(ser::Error::CorruptedData));
 
-		// Kernel variant 4 (and above) is invalid.
+		// Kernel variant 5 (and above) is invalid.
 		let mut vec = vec![];
-		ser::serialize_default(&mut vec, &(4u8))?;
+		ser::serialize_default(&mut vec, &(5u8))?;
 		let res: Result<KernelFeatures, _> = ser::deserialize_default(&mut &vec[..]);
 		assert_eq!(res.err(), Some(ser::Error::CorruptedData));
 

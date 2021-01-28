@@ -164,71 +164,81 @@ fn update_genesis_rs(gen: &core::core::Block) {
 			gen.header.timestamp.time().second(),
 		),
 	));
-	replacements.push((
+	println!(
+		"{}, {}",
 		"prev_root".to_string(),
 		format!(
 			"Hash::from_hex(\"{}\").unwrap()",
 			gen.header.prev_root.to_hex()
 		),
-	));
-	replacements.push((
+	);
+	println!(
+		"{}, {}",
 		"output_root".to_string(),
 		format!(
 			"Hash::from_hex(\"{}\").unwrap()",
 			gen.header.output_root.to_hex()
 		),
-	));
-	replacements.push((
+	);
+	println!(
+		"{}, {}",
 		"range_proof_root".to_string(),
 		format!(
 			"Hash::from_hex(\"{}\").unwrap()",
 			gen.header.range_proof_root.to_hex()
 		),
-	));
-	replacements.push((
+	);
+	println!(
+		"{}, {}",
 		"kernel_root".to_string(),
 		format!(
 			"Hash::from_hex(\"{}\").unwrap()",
 			gen.header.kernel_root.to_hex()
 		),
-	));
-	replacements.push((
+	);
+	println!(
+		"{}, {}",
 		"total_kernel_offset".to_string(),
 		format!(
 			"BlindingFactor::from_hex(\"{}\").unwrap()",
 			gen.header.total_kernel_offset.to_hex()
 		),
-	));
+	);
 	replacements.push(("nonce".to_string(), format!("{}", gen.header.pow.nonce)));
-	replacements.push((
+	println!(
+		"{}, {}",
 		"nonces".to_string(),
 		format!("vec!{:?}", gen.header.pow.proof.nonces),
-	));
-	replacements.push((
+	);
+	println!(
+		"{}, {}",
 		"excess".to_string(),
 		format!(
 			"Commitment::from_vec(util::from_hex({:x?}.to_string()).unwrap())",
 			gen.kernels()[0].excess.to_hex()
 		),
-	));
-	replacements.push((
+	);
+	println!(
+		"{}, {}",
 		"excess_sig".to_string(),
 		format!(
 			"Signature::from_raw_data(&{:?}).unwrap()",
 			gen.kernels()[0].excess_sig.to_raw_data().to_vec(),
 		),
-	));
-	replacements.push((
+	);
+	println!(
+		"{}, {}",
 		"commit".to_string(),
 		format!(
 			"Commitment::from_vec(util::from_hex({:x?}.to_string()).unwrap())",
 			gen.outputs()[0].commitment().0.to_vec().to_hex()
 		),
-	));
-	replacements.push((
+	);
+	println!(
+		"{}, {}",
 		"proof".to_string(),
 		format!("{:?}", gen.outputs()[0].proof.bytes().to_vec()),
-	));
+	);
 
 	// check each possible replacement in the file, remove the replacement from
 	// the list when found to avoid double replacements

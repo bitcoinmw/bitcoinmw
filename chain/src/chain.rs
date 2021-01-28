@@ -751,8 +751,13 @@ impl Chain {
 
 		let (prev_root, roots, sizes) =
 			txhashset::extending_readonly(&mut header_pmmr, &mut txhashset, |ext, batch| {
-				let previous_header = batch.get_previous_header(&b.header)?;
-				pipe::rewind_and_apply_fork(&previous_header, ext, batch)?;
+				// We add this condition. It's needed for gen_gen,
+				// doesn't appear needed if height == 0. Can check though and remove if
+				// it has ill effect.
+				if b.header.height > 0 {
+					let previous_header = batch.get_previous_header(&b.header)?;
+					pipe::rewind_and_apply_fork(&previous_header, ext, batch)?;
+				}
 
 				let extension = &mut ext.extension;
 				let header_extension = &mut ext.header_extension;

@@ -14,6 +14,7 @@
 
 //! Main for building the genesis generation utility.
 
+use crate::core::global;
 use grin_core::libtx::proof;
 use grin_core::ser::ProtocolVersion;
 use std::io::{BufRead, Write};
@@ -40,10 +41,11 @@ static BCYPHER_URL: &str = "https://api.blockcypher.com/v1/btc/main";
 static BCHAIR_URL: &str = "https://api.blockchair.com/bitcoin/blocks?limit=2";
 
 static GENESIS_RS_PATH: &str = "../../core/src/genesis.rs";
-static PLUGIN_PATH: &str = "./cuckaroo_mean_cuda_29.cuckooplugin";
-static WALLET_SEED_PATH: &str = "./wallet.seed";
+static PLUGIN_PATH: &str =
+	"../../../grin-miner/target/release/plugins/cuckaroo_cpu_compat_29.cuckooplugin";
 
 fn main() {
+	global::set_local_chain_type(global::ChainTypes::Mainnet);
 	if !path::Path::new(GENESIS_RS_PATH).exists() {
 		panic!(
 			"File {} not found, make sure you're running this from the gen_gen directory",
@@ -54,12 +56,6 @@ fn main() {
 		panic!(
 			"File {} not found, make sure you're running this from the gen_gen directory",
 			PLUGIN_PATH
-		);
-	}
-	if !path::Path::new(WALLET_SEED_PATH).exists() {
-		panic!(
-			"File {} not found, make sure you're running this from the gen_gen directory",
-			WALLET_SEED_PATH
 		);
 	}
 
@@ -108,6 +104,7 @@ fn main() {
 	let mut solver_stats = plugin::SolverStats::default();
 	let mut nonce = 0;
 	while solver_sols.num_sols == 0 {
+		println!("Attempts = {}", nonce);
 		solver_sols = plugin::SolverSolutions::default();
 		gen.header.pow.nonce = nonce;
 		let _ = plugin_lib.run_solver(

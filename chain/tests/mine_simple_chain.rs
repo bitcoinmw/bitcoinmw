@@ -769,6 +769,7 @@ fn output_header_mappings() {
 				&pk,
 				0,
 				false,
+				prev.height + 1,
 			)
 			.unwrap();
 			reward_outputs.push(reward.0.clone());
@@ -887,8 +888,15 @@ where
 
 	let height = prev.height + 1;
 	let fees = txs.iter().map(|tx| tx.fee(height)).sum();
-	let reward =
-		libtx::reward::output(kc, &libtx::ProofBuilder::new(kc), &key_id, fees, false).unwrap();
+	let reward = libtx::reward::output(
+		kc,
+		&libtx::ProofBuilder::new(kc),
+		&key_id,
+		fees,
+		false,
+		height,
+	)
+	.unwrap();
 	let mut b = match core::core::Block::new(prev, txs, Difficulty::from_num(diff), reward) {
 		Err(e) => panic!("{:?}", e),
 		Ok(b) => b,

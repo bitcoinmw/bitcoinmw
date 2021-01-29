@@ -61,6 +61,7 @@ where
 		&key_id,
 		0,
 		false,
+		0,
 	)
 	.unwrap();
 
@@ -89,9 +90,15 @@ where
 		let next_header_info =
 			consensus::next_difficulty(prev.height + 1, chain.difficulty_iter().unwrap());
 		let pk = ExtKeychainPath::new(1, n as u32, 0, 0, 0).to_identifier();
-		let reward =
-			libtx::reward::output(keychain, &libtx::ProofBuilder::new(keychain), &pk, 0, false)
-				.unwrap();
+		let reward = libtx::reward::output(
+			keychain,
+			&libtx::ProofBuilder::new(keychain),
+			&pk,
+			0,
+			false,
+			prev.height + 1,
+		)
+		.unwrap();
 		let mut b =
 			core::core::Block::new(&prev, &[], next_header_info.difficulty, reward).unwrap();
 		b.header.timestamp = prev.timestamp + Duration::seconds(60);

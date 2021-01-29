@@ -45,8 +45,15 @@ where
 	let next_header_info = consensus::next_difficulty(1, chain.difficulty_iter()?);
 	let fee = txs.iter().map(|x| x.fee(next_height)).sum();
 	let key_id = ExtKeychainPath::new(1, next_height as u32, 0, 0, 0).to_identifier();
-	let reward =
-		reward::output(keychain, &ProofBuilder::new(keychain), &key_id, fee, false).unwrap();
+	let reward = reward::output(
+		keychain,
+		&ProofBuilder::new(keychain),
+		&key_id,
+		fee,
+		false,
+		prev.height + 1,
+	)
+	.unwrap();
 
 	let mut block = Block::new(&prev, txs, next_header_info.clone().difficulty, reward)?;
 

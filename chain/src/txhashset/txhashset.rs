@@ -1533,15 +1533,12 @@ impl<'a> Extension<'a> {
 	/// For a significantly faster way of validating full kernel sums see BlockSums.
 	pub fn validate_kernel_sums(
 		&self,
-		genesis: &BlockHeader,
 		header: &BlockHeader,
 	) -> Result<(Commitment, Commitment), Error> {
 		let now = Instant::now();
 
-		let (utxo_sum, kernel_sum) = self.verify_kernel_sums(
-			header.total_overage(genesis.kernel_mmr_size > 0),
-			header.total_kernel_offset(),
-		)?;
+		let (utxo_sum, kernel_sum) =
+			self.verify_kernel_sums(header.total_overage(), header.total_kernel_offset())?;
 
 		debug!(
 			"txhashset: validated total kernel sums, took {}s",
@@ -1555,7 +1552,6 @@ impl<'a> Extension<'a> {
 	/// A "fast validation" will skip rangeproof verification and kernel signature verification.
 	pub fn validate(
 		&self,
-		genesis: &BlockHeader,
 		fast_validation: bool,
 		status: &dyn TxHashsetWriteStatus,
 		header: &BlockHeader,
@@ -1571,7 +1567,7 @@ impl<'a> Extension<'a> {
 
 		// The real magicking happens here. Sum of kernel excesses should equal
 		// sum of unspent outputs minus total supply.
-		let (output_sum, kernel_sum) = self.validate_kernel_sums(genesis, header)?;
+		let (output_sum, kernel_sum) = self.validate_kernel_sums(header)?;
 
 		// These are expensive verification step (skipped for "fast validation").
 		if !fast_validation {

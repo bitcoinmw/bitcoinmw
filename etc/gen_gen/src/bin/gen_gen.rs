@@ -15,7 +15,6 @@
 //! Main for building the genesis generation utility.
 
 use crate::core::global;
-use grin_core::libtx::proof;
 use grin_core::ser::ProtocolVersion;
 use std::io::{BufRead, Write};
 use std::sync::Arc;
@@ -34,7 +33,7 @@ use grin_util::{self as util, ToHex};
 
 use grin_core::core::hash::Hashed;
 use grin_core::core::verifier_cache::LruVerifierCache;
-use grin_keychain::{BlindingFactor, ExtKeychain, Keychain};
+use grin_keychain::BlindingFactor;
 
 static BCHAIN_INFO_URL: &str = "https://blockchain.info/latestblock";
 static BCYPHER_URL: &str = "https://api.blockcypher.com/v1/btc/main";
@@ -63,6 +62,7 @@ fn main() {
 	let h1 = get_bchain_head();
 	let h2 = get_bcypher_head();
 	let h3 = get_bchair_head();
+
 	if h1 != h2 || h1 != h3 {
 		panic!(
 			"Bitcoin chain head is inconsistent, please retry ({}, {}, {}).",
@@ -74,12 +74,7 @@ fn main() {
 	// build the basic parts of the genesis block header
 	let mut gen = core::genesis::genesis_main();
 
-	let keychain: ExtKeychain = Keychain::from_random_seed(false).unwrap();
-	let key_id = ExtKeychain::derive_key_id(3, 1, 0, 0, 0);
-	let builder = proof::ProofBuilder::new(&keychain);
-	let reward = core::libtx::reward::output(&keychain, &builder, &key_id, 0, false).unwrap();
-
-	gen = gen.with_reward(reward.0, reward.1);
+	gen = gen.without_reward();
 
 	{
 		// setup a tmp chain to set block header roots

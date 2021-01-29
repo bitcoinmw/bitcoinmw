@@ -34,8 +34,15 @@ where
 	let prev = chain.head_header().unwrap();
 	let next_header_info = consensus::next_difficulty(1, chain.difficulty_iter().unwrap());
 	let fee = txs.iter().map(|x| x.fee(prev.height + 1)).sum();
-	let reward =
-		reward::output(keychain, &ProofBuilder::new(keychain), key_id, fee, false).unwrap();
+	let reward = reward::output(
+		keychain,
+		&ProofBuilder::new(keychain),
+		key_id,
+		fee,
+		false,
+		prev.height + 1,
+	)
+	.unwrap();
 
 	let mut block = Block::new(&prev, &txs, next_header_info.clone().difficulty, reward).unwrap();
 

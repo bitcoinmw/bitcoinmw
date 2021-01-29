@@ -722,7 +722,7 @@ impl Chain {
 		txhashset::extending_readonly(&mut header_pmmr, &mut txhashset, |ext, batch| {
 			pipe::rewind_and_apply_fork(&header, ext, batch)?;
 			ext.extension
-				.validate(&self.genesis, fast_validation, &NoStatus, &header)?;
+				.validate(fast_validation, &NoStatus, &header)?;
 			Ok(())
 		})
 	}
@@ -1165,8 +1165,7 @@ impl Chain {
 
 				// Validate the extension, generating the utxo_sum and kernel_sum.
 				// Full validation, including rangeproofs and kernel signature verification.
-				let (utxo_sum, kernel_sum) =
-					extension.validate(&self.genesis, false, status, &header)?;
+				let (utxo_sum, kernel_sum) = extension.validate(false, status, &header)?;
 
 				// Save the block_sums (utxo_sum, kernel_sum) to the db for use later.
 				batch.save_block_sums(
@@ -1761,8 +1760,7 @@ fn setup_head(
 
 						// Do a full (and slow) validation of the txhashset extension
 						// to calculate the utxo_sum and kernel_sum at this block height.
-						let (utxo_sum, kernel_sum) =
-							extension.validate_kernel_sums(&genesis.header, &header)?;
+						let (utxo_sum, kernel_sum) = extension.validate_kernel_sums(&header)?;
 
 						// Save the block_sums to the db for use later.
 						batch.save_block_sums(

@@ -43,8 +43,20 @@ pub const BLOCK_TIME_SEC: u64 = 60;
 pub const REWARD: u64 = BLOCK_TIME_SEC * GRIN_BASE;
 
 /// Actual block reward for a given total fee amount
-pub fn reward(fee: u64) -> u64 {
+pub fn reward(fee: u64, _height: u64) -> u64 {
 	REWARD.saturating_add(fee)
+}
+
+/// Calculate block reward based on height
+/// TODO: unimplemented
+pub fn calc_block_reward(_height: u64) -> u64 {
+	REWARD
+}
+
+/// Calculate block overage based on height and claimed BTCUtxos
+/// TODO: unimplemented
+pub fn calc_block_overage(height: u64) -> u64 {
+	REWARD * height
 }
 
 /// an hour in seconds

@@ -46,9 +46,10 @@ where
 	K: Keychain,
 {
 	let key_id = keychain::ExtKeychain::derive_key_id(1, 0, 0, 0, 0);
-	let reward = reward::output(keychain, &ProofBuilder::new(keychain), &key_id, 0, false).unwrap();
+	let reward =
+		reward::output(keychain, &ProofBuilder::new(keychain), &key_id, 0, false, 0).unwrap();
 
-	genesis::genesis_dev().with_reward(reward.0, reward.1)
+	genesis::genesis_dev().without_reward()
 }
 
 pub fn init_chain(dir_name: &str, genesis: Block) -> Chain {
@@ -82,8 +83,15 @@ where
 	let next_header_info = consensus::next_difficulty(height, chain.difficulty_iter().unwrap());
 	let fee = txs.iter().map(|x| x.fee(height)).sum();
 	let key_id = ExtKeychainPath::new(1, height as u32, 0, 0, 0).to_identifier();
-	let reward =
-		reward::output(keychain, &ProofBuilder::new(keychain), &key_id, fee, false).unwrap();
+	let reward = reward::output(
+		keychain,
+		&ProofBuilder::new(keychain),
+		&key_id,
+		fee,
+		false,
+		height,
+	)
+	.unwrap();
 
 	let mut block = Block::new(&prev, txs, next_header_info.clone().difficulty, reward).unwrap();
 

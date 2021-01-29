@@ -124,7 +124,15 @@ where
 		.iter()
 		.map(|tx| tx.fee(previous_header.height + 1))
 		.sum();
-	let reward_output = reward::output(keychain, builder, &key_id, fees, false).unwrap();
+	let reward_output = reward::output(
+		keychain,
+		builder,
+		&key_id,
+		fees,
+		false,
+		previous_header.height + 1,
+	)
+	.unwrap();
 	Block::new(&previous_header, txs, Difficulty::min_dma(), reward_output).unwrap()
 }
 

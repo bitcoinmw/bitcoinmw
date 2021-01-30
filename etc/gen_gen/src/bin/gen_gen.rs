@@ -15,7 +15,10 @@
 //! Main for building the genesis generation utility.
 
 use crate::core::global;
+use grin_core::libtx::proof;
 use grin_core::ser::ProtocolVersion;
+use grin_keychain::ExtKeychain;
+use grin_keychain::Keychain;
 use std::io::{BufRead, Write};
 use std::sync::Arc;
 use std::{fs, io, path};
@@ -41,7 +44,7 @@ static BCHAIR_URL: &str = "https://api.blockchair.com/bitcoin/blocks?limit=2";
 
 static GENESIS_RS_PATH: &str = "../../core/src/genesis.rs";
 static PLUGIN_PATH: &str =
-	"../../../grin-miner/target/release/plugins/cuckaroo_cpu_compat_29.cuckooplugin";
+	"../../../grin-miner/target/release/plugins/cuckarood_cpu_compat_29.cuckooplugin";
 
 fn main() {
 	global::set_local_chain_type(global::ChainTypes::Mainnet);
@@ -69,12 +72,18 @@ fn main() {
 			h1, h2, h3
 		);
 	}
+
 	println!("Using bitcoin block hash {}", h1);
 
 	// build the basic parts of the genesis block header
 	let mut gen = core::genesis::genesis_main();
 
-	gen = gen.without_reward();
+	let keychain: ExtKeychain = Keychain::from_random_seed(false).unwrap();
+	let key_id = ExtKeychain::derive_key_id(3, 1, 0, 0, 0);
+	let builder = proof::ProofBuilder::new(&keychain);
+	let reward = core::libtx::reward::output(&keychain, &builder, &key_id, 0, false, 0).unwrap();
+
+	gen = gen.with_reward(reward.0, reward.1);
 
 	{
 		// setup a tmp chain to set block header roots

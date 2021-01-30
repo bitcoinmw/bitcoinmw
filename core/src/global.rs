@@ -17,16 +17,12 @@
 //! should be used sparingly.
 
 use crate::consensus::{
-	graph_weight, header_version, HeaderInfo, BASE_EDGE_BITS, BLOCK_TIME_SEC,
-	C32_GRAPH_WEIGHT, COINBASE_MATURITY, CUT_THROUGH_HORIZON, DAY_HEIGHT, DEFAULT_MIN_EDGE_BITS,
-	DMA_WINDOW, GRIN_BASE, INITIAL_DIFFICULTY, KERNEL_WEIGHT, MAX_BLOCK_WEIGHT,
-	OUTPUT_WEIGHT, PROOFSIZE, SECOND_POW_EDGE_BITS, STATE_SYNC_THRESHOLD,
+	graph_weight, HeaderInfo, BASE_EDGE_BITS, BLOCK_TIME_SEC, C32_GRAPH_WEIGHT, COINBASE_MATURITY,
+	CUT_THROUGH_HORIZON, DAY_HEIGHT, DEFAULT_MIN_EDGE_BITS, DMA_WINDOW, GRIN_BASE,
+	INITIAL_DIFFICULTY, KERNEL_WEIGHT, MAX_BLOCK_WEIGHT, OUTPUT_WEIGHT, PROOFSIZE,
+	SECOND_POW_EDGE_BITS, STATE_SYNC_THRESHOLD,
 };
-use crate::core::block::HeaderVersion;
-use crate::pow::{
-	self, new_cuckaroo_ctx, new_cuckarood_ctx, new_cuckaroom_ctx, new_cuckarooz_ctx,
-	new_cuckatoo_ctx, no_cuckaroo_ctx, BitVec, PoWContext,
-};
+use crate::pow::{self, new_cuckarood_ctx, new_cuckatoo_ctx, BitVec, PoWContext};
 use crate::ser::ProtocolVersion;
 use std::cell::Cell;
 use util::OneTime;
@@ -292,27 +288,16 @@ pub fn is_nrd_enabled() -> bool {
 /// Return either a cuckaroo* context or a cuckatoo context
 /// Single change point
 pub fn create_pow_context<T>(
-	height: u64,
+	_height: u64,
 	edge_bits: u8,
 	proof_size: usize,
 	max_sols: u32,
 ) -> Result<Box<dyn PoWContext>, pow::Error> {
 	let chain_type = get_chain_type();
 	if chain_type == ChainTypes::Mainnet || chain_type == ChainTypes::Testnet {
-		// Mainnet and Testnet have Cuckatoo31+ for AF and Cuckaroo{,d,m,z}29 for AR
-		if edge_bits > 29 {
-			new_cuckatoo_ctx(edge_bits, proof_size, max_sols)
-		} else {
-			match header_version(height) {
-				HeaderVersion(1) => new_cuckaroo_ctx(edge_bits, proof_size),
-				HeaderVersion(2) => new_cuckarood_ctx(edge_bits, proof_size),
-				HeaderVersion(3) => new_cuckaroom_ctx(edge_bits, proof_size),
-				HeaderVersion(4) => new_cuckarooz_ctx(edge_bits, proof_size),
-				_ => no_cuckaroo_ctx(),
-			}
-		}
+		new_cuckarood_ctx(edge_bits, proof_size)
 	} else {
-		// Everything else is Cuckatoo only
+		// this is so gen_gen works
 		new_cuckatoo_ctx(edge_bits, proof_size, max_sols)
 	}
 }

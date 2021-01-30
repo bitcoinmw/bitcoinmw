@@ -43,20 +43,29 @@ pub const BLOCK_TIME_SEC: u64 = 60;
 pub const REWARD: u64 = BLOCK_TIME_SEC * GRIN_BASE;
 
 /// Actual block reward for a given total fee amount
-pub fn reward(fee: u64, _height: u64) -> u64 {
-	REWARD.saturating_add(fee)
+pub fn reward(fee: u64, height: u64) -> u64 {
+	calc_block_reward(height).saturating_add(fee)
 }
 
 /// Calculate block reward based on height
 /// TODO: unimplemented
-pub fn calc_block_reward(_height: u64) -> u64 {
-	REWARD
+pub fn calc_block_reward(height: u64) -> u64 {
+	if height == 0 {
+		// reward for genesis block
+		1
+	} else {
+		REWARD
+	}
 }
 
 /// Calculate block overage based on height and claimed BTCUtxos
 /// TODO: unimplemented
 pub fn calc_block_overage(height: u64) -> u64 {
-	REWARD * height
+	if height == 0 {
+		1
+	} else {
+		(REWARD * height) + 1
+	}
 }
 
 /// an hour in seconds
@@ -74,11 +83,9 @@ pub const YEAR_HEIGHT: u64 = 52 * WEEK_HEIGHT;
 /// Number of blocks before a coinbase matures and can be spent
 pub const COINBASE_MATURITY: u64 = DAY_HEIGHT;
 
-/// Target ratio of secondary proof of work to primary proof of work,
-/// as a function of block height (time). Starts at 90% losing a percent
-/// approximately every week. Represented as an integer between 0 and 100.
-pub fn secondary_pow_ratio(height: u64) -> u64 {
-	90u64.saturating_sub(height / (2 * YEAR_HEIGHT / 90))
+/// We use all C29d from the start
+pub fn secondary_pow_ratio(_height: u64) -> u64 {
+	100
 }
 
 /// Cuckoo-cycle proof size (cycle length)
@@ -151,30 +158,10 @@ pub const TESTNET_FOURTH_HARD_FORK: u64 = 642_240;
 /// Fork every 3 blocks
 pub const TESTING_HARD_FORK_INTERVAL: u64 = 3;
 
-/// Compute possible block version at a given height, implements
-/// 6 months interval scheduled hard forks for the first 2 years.
-pub fn header_version(height: u64) -> HeaderVersion {
-	let hf_interval = (1 + height / HARD_FORK_INTERVAL) as u16;
-	match global::get_chain_type() {
-		global::ChainTypes::Mainnet => HeaderVersion(min(5, hf_interval)),
-		global::ChainTypes::AutomatedTesting | global::ChainTypes::UserTesting => {
-			let testing_hf_interval = (1 + height / TESTING_HARD_FORK_INTERVAL) as u16;
-			HeaderVersion(min(5, testing_hf_interval))
-		}
-		global::ChainTypes::Testnet => {
-			if height < TESTNET_FIRST_HARD_FORK {
-				HeaderVersion(1)
-			} else if height < TESTNET_SECOND_HARD_FORK {
-				HeaderVersion(2)
-			} else if height < TESTNET_THIRD_HARD_FORK {
-				HeaderVersion(3)
-			} else if height < TESTNET_FOURTH_HARD_FORK {
-				HeaderVersion(4)
-			} else {
-				HeaderVersion(5)
-			}
-		}
-	}
+/// Compute possible block version at a given height,
+/// currently no hard forks.
+pub fn header_version(_height: u64) -> HeaderVersion {
+	HeaderVersion(1)
 }
 
 /// Check whether the block version is valid at a given height, implements

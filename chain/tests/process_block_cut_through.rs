@@ -115,11 +115,11 @@ fn process_block_cut_through() -> Result<(), chain::Error> {
 			fee: FeeFields::zero(),
 		},
 		&[
-			build::coinbase_input(consensus::REWARD0, key_id1.clone()),
-			build::coinbase_input(consensus::REWARD0, key_id2.clone()),
-			build::output(60_000_000_000, key_id1.clone()),
-			build::output(50_000_000_000, key_id2.clone()),
-			build::output(10_000_000_000, key_id3.clone()),
+			build::coinbase_input(consensus::REWARD1, key_id1.clone()),
+			build::coinbase_input(consensus::REWARD1, key_id2.clone()),
+			build::output(312_500_000, key_id1.clone()),
+			build::output(212_500_000, key_id2.clone()),
+			build::output(100_000_000, key_id3.clone()),
 		],
 		&keychain,
 		&pb,
@@ -127,7 +127,7 @@ fn process_block_cut_through() -> Result<(), chain::Error> {
 	.expect("valid tx");
 
 	// The offending commitment, reused in both an input and an output.
-	let commit = keychain.commit(60_000_000_000, &key_id1, SwitchCommitmentType::Regular)?;
+	let commit = keychain.commit(312_500_000, &key_id1, SwitchCommitmentType::Regular)?;
 	let inputs: Vec<_> = tx.inputs().into();
 	assert!(inputs.iter().any(|input| input.commitment() == commit));
 	assert!(tx

@@ -53,7 +53,7 @@ pub const BLOCK_TIME_SEC: u64 = 60;
 /// a little. The goal will be to get exactly 21m BMWs, have
 /// a 1000 year long tail, and do a snapshot on January 3, 2022.
 
-/// Snapshot includes 18,262,500,000,000,000 NanoBMWs
+/// Snapshot includes 18,918,750,000,000,000 NanoBMWs
 
 /// Gensis reward 1 NanoBMW
 pub const REWARD0: u64 = 1;
@@ -72,7 +72,7 @@ pub const REWARD6: u64 = 9_675_625; //  20,507,812,500,000 NanoBMWs
 /// Seventh reward for 2,100,000 blocks
 pub const REWARD7: u64 = 4_882_812; //  10,253,905,200,000 NanoBMWs
 /// Eigth reward for 525,600,000 blocks
-pub const REWARD8: u64 = 3_251_172; //  1,708,816,407,300,000 NanoBMWs
+pub const REWARD8: u64 = 2_000_000; //  105,120,000,0000,000 NanoBMWs
 
 /// Actual block reward for a given total fee amount
 pub fn reward(fee: u64, height: u64) -> u64 {
@@ -83,29 +83,21 @@ fn get_epoch_start(num: u64) -> u64 {
 	if num == 1 {
 		1
 	} else if num == 2 {
-		5
-	// 1_224_600
+		1_224_600
 	} else if num == 3 {
-		10
-	// 3_324_600
+		3_324_600
 	} else if num == 4 {
-		15
-	// 5_424_600
+		5_424_600
 	} else if num == 5 {
-		20
-	// 7_524_600
+		7_524_600
 	} else if num == 6 {
-		25
-	// 9_624_600
+		9_624_600
 	} else if num == 7 {
-		30
-	// 11_724_600
+		11_724_600
 	} else if num == 8 {
-		35
-	// 13_824_600
+		13_824_600
 	} else if num == 9 {
-		40
-	// 539_424_600
+		539_424_600
 	} else {
 		// shouldn't get here.
 		0
@@ -134,9 +126,7 @@ pub fn calc_block_reward(height: u64) -> u64 {
 	} else if height <= get_epoch_start(9) {
 		REWARD8
 	} else {
-		// we exit here. Up to future generations to decide
-		// how to handle.
-		std::process::exit(0);
+		0 // no reward after this.
 	}
 }
 

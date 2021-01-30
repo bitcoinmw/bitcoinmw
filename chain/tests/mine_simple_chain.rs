@@ -571,8 +571,8 @@ fn spend_rewind_spend() {
 		let tx1 = build::transaction(
 			KernelFeatures::Plain { fee: 20000.into() },
 			&[
-				build::coinbase_input(consensus::REWARD, key_id_coinbase.clone()),
-				build::output(consensus::REWARD - 20000, key_id30.clone()),
+				build::coinbase_input(consensus::REWARD1, key_id_coinbase.clone()),
+				build::output(consensus::REWARD1 - 20000, key_id30.clone()),
 			],
 			&kc,
 			&pb,
@@ -644,8 +644,8 @@ fn spend_in_fork_and_compact() {
 		let tx1 = build::transaction(
 			KernelFeatures::Plain { fee: 20000.into() },
 			&[
-				build::coinbase_input(consensus::REWARD, key_id2.clone()),
-				build::output(consensus::REWARD - 20000, key_id30.clone()),
+				build::coinbase_input(consensus::REWARD1, key_id2.clone()),
+				build::output(consensus::REWARD1 - 20000, key_id30.clone()),
 			],
 			&kc,
 			&pb,
@@ -662,8 +662,8 @@ fn spend_in_fork_and_compact() {
 		let tx2 = build::transaction(
 			KernelFeatures::Plain { fee: 20000.into() },
 			&[
-				build::input(consensus::REWARD - 20000, key_id30.clone()),
-				build::output(consensus::REWARD - 40000, key_id31.clone()),
+				build::input(consensus::REWARD1 - 20000, key_id30.clone()),
+				build::output(consensus::REWARD1 - 40000, key_id31.clone()),
 			],
 			&kc,
 			&pb,

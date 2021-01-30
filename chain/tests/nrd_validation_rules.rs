@@ -129,8 +129,8 @@ fn process_block_nrd_validation() -> Result<(), Error> {
 
 	let tx1 = build::transaction_with_kernel(
 		&[
-			build::coinbase_input(consensus::REWARD, key_id1.clone()),
-			build::output(consensus::REWARD - 20000, key_id2.clone()),
+			build::coinbase_input(consensus::REWARD1, key_id1.clone()),
+			build::output(consensus::REWARD1 - 20000, key_id2.clone()),
 		],
 		kernel.clone(),
 		excess.clone(),
@@ -141,8 +141,8 @@ fn process_block_nrd_validation() -> Result<(), Error> {
 
 	let tx2 = build::transaction_with_kernel(
 		&[
-			build::input(consensus::REWARD - 20000, key_id2.clone()),
-			build::output(consensus::REWARD - 40000, key_id3.clone()),
+			build::input(consensus::REWARD1 - 20000, key_id2.clone()),
+			build::output(consensus::REWARD1 - 40000, key_id3.clone()),
 		],
 		kernel.clone(),
 		excess.clone(),
@@ -245,8 +245,8 @@ fn process_block_nrd_validation_relative_height_1() -> Result<(), Error> {
 
 	let tx1 = build::transaction_with_kernel(
 		&[
-			build::coinbase_input(consensus::REWARD, key_id1.clone()),
-			build::output(consensus::REWARD - 20000, key_id2.clone()),
+			build::coinbase_input(consensus::REWARD1, key_id1.clone()),
+			build::output(consensus::REWARD1 - 20000, key_id2.clone()),
 		],
 		kernel.clone(),
 		excess.clone(),
@@ -257,8 +257,8 @@ fn process_block_nrd_validation_relative_height_1() -> Result<(), Error> {
 
 	let tx2 = build::transaction_with_kernel(
 		&[
-			build::input(consensus::REWARD - 20000, key_id2.clone()),
-			build::output(consensus::REWARD - 40000, key_id3.clone()),
+			build::input(consensus::REWARD1 - 20000, key_id2.clone()),
+			build::output(consensus::REWARD1 - 40000, key_id3.clone()),
 		],
 		kernel.clone(),
 		excess.clone(),
@@ -344,8 +344,8 @@ fn process_block_nrd_validation_fork() -> Result<(), Error> {
 
 	let tx1 = build::transaction_with_kernel(
 		&[
-			build::coinbase_input(consensus::REWARD, key_id1.clone()),
-			build::output(consensus::REWARD - 20000, key_id2.clone()),
+			build::coinbase_input(consensus::REWARD1, key_id1.clone()),
+			build::output(consensus::REWARD1 - 20000, key_id2.clone()),
 		],
 		kernel.clone(),
 		excess.clone(),
@@ -356,8 +356,8 @@ fn process_block_nrd_validation_fork() -> Result<(), Error> {
 
 	let tx2 = build::transaction_with_kernel(
 		&[
-			build::input(consensus::REWARD - 20000, key_id2.clone()),
-			build::output(consensus::REWARD - 40000, key_id3.clone()),
+			build::input(consensus::REWARD1 - 20000, key_id2.clone()),
+			build::output(consensus::REWARD1 - 40000, key_id3.clone()),
 		],
 		kernel.clone(),
 		excess.clone(),

@@ -49,7 +49,7 @@ where
 	let reward =
 		reward::output(keychain, &ProofBuilder::new(keychain), &key_id, 0, false, 0).unwrap();
 
-	genesis::genesis_dev().without_reward()
+	genesis::genesis_dev().with_reward(reward.0, reward.1)
 }
 
 pub fn init_chain(dir_name: &str, genesis: Block) -> Chain {

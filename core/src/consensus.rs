@@ -39,32 +39,190 @@ pub const NANO_GRIN: u64 = 1;
 /// (adjusting the reward accordingly).
 pub const BLOCK_TIME_SEC: u64 = 60;
 
-/// The block subsidy amount, one grin per second on average
-pub const REWARD: u64 = BLOCK_TIME_SEC * GRIN_BASE;
+/// Start at BTC block 717,000 (snapshot) which should occur around
+/// Jan 3, 2022. This block will reward 6.25 BTC.
+/// We allocate the remaining of the 6.25 blocks to our
+/// "long tail" which will last 1000 years and start with 3.25.
+/// So initial reward is 0.3125 BMWs for 1,224,600 more blocks.
+/// This is due to the 1 minute blocks instead of the 10 minute of BTC.
+/// This is approximately Bitcoin's halving schedule, until
+/// the 8th halving, after which the long tail will distribute the
+/// remainder of the BMWs over 1000 years. At block 717,000 there will be
+/// 19,246,875 BTC.
+/// Note that pre-launch we may recalibrate these numbers
+/// a little. The goal will be to get exactly 21m BMWs, have
+/// a 1000 year long tail, and do a snapshot on January 3, 2022.
+
+/// Snapshot includes 18,262,500,000,000,000 NanoBMWs
+
+/// Gensis reward 1 NanoBMW
+pub const REWARD0: u64 = 1;
+/// First reward 1,224,600 blocks  
+pub const REWARD1: u64 = 312_500_000; // 382,687,500,000,000 NanoBMWs
+/// Second reward for 2,100,000 blocks
+pub const REWARD2: u64 = 156_250_000; // 328,125,000,000,000 NanoBMWs
+/// Third reward for 2,100,000 blocks
+pub const REWARD3: u64 = 78_125_000; // 164,062,500,000,000 NanoBMWs
+/// Fourth reward for 2,100,000 blocks
+pub const REWARD4: u64 = 39_062_500; //  82,031,250,000,000 NanoBMWs
+/// Fifth reward for 2,100,000 blocks
+pub const REWARD5: u64 = 19_531_250; //  41,015,625,000,000 NanoBMWs
+/// Sixth reward for 2,100,000 blocks
+pub const REWARD6: u64 = 9_675_625; //  20,507,812,500,000 NanoBMWs
+/// Seventh reward for 2,100,000 blocks
+pub const REWARD7: u64 = 4_882_812; //  10,253,905,200,000 NanoBMWs
+/// Eigth reward for 525,600,000 blocks
+pub const REWARD8: u64 = 3_251_172; //  1,708,816,407,300,000 NanoBMWs
 
 /// Actual block reward for a given total fee amount
 pub fn reward(fee: u64, height: u64) -> u64 {
 	calc_block_reward(height).saturating_add(fee)
 }
 
+fn get_epoch_start(num: u64) -> u64 {
+	if num == 1 {
+		1
+	} else if num == 2 {
+		5
+	// 1_224_600
+	} else if num == 3 {
+		10
+	// 3_324_600
+	} else if num == 4 {
+		15
+	// 5_424_600
+	} else if num == 5 {
+		20
+	// 7_524_600
+	} else if num == 6 {
+		25
+	// 9_624_600
+	} else if num == 7 {
+		30
+	// 11_724_600
+	} else if num == 8 {
+		35
+	// 13_824_600
+	} else if num == 9 {
+		40
+	// 539_424_600
+	} else {
+		// shouldn't get here.
+		0
+	}
+}
+
 /// Calculate block reward based on height
-/// TODO: unimplemented
 pub fn calc_block_reward(height: u64) -> u64 {
 	if height == 0 {
 		// reward for genesis block
-		1
+		REWARD0
+	} else if height <= get_epoch_start(2) {
+		REWARD1
+	} else if height <= get_epoch_start(3) {
+		REWARD2
+	} else if height <= get_epoch_start(4) {
+		REWARD3
+	} else if height <= get_epoch_start(5) {
+		REWARD4
+	} else if height <= get_epoch_start(6) {
+		REWARD5
+	} else if height <= get_epoch_start(7) {
+		REWARD6
+	} else if height <= get_epoch_start(8) {
+		REWARD7
+	} else if height <= get_epoch_start(9) {
+		REWARD8
 	} else {
-		REWARD
+		// we exit here. Up to future generations to decide
+		// how to handle.
+		std::process::exit(0);
+	}
+}
+
+fn get_overage_offset_start_epoch(num: u64) -> u64 {
+	if num == 1 {
+		REWARD0
+	} else if num == 2 {
+		get_epoch_start(2) * REWARD1 + REWARD0
+	} else if num == 3 {
+		get_epoch_start(3) * REWARD2 + get_epoch_start(2) * REWARD1 + REWARD0
+	} else if num == 4 {
+		get_epoch_start(4) * REWARD3
+			+ get_epoch_start(3) * REWARD2
+			+ get_epoch_start(2) * REWARD1
+			+ REWARD0
+	} else if num == 5 {
+		get_epoch_start(5) * REWARD4
+			+ get_epoch_start(4) * REWARD3
+			+ get_epoch_start(3) * REWARD2
+			+ get_epoch_start(2) * REWARD1
+			+ REWARD0
+	} else if num == 6 {
+		get_epoch_start(6) * REWARD5
+			+ get_epoch_start(5) * REWARD4
+			+ get_epoch_start(4) * REWARD3
+			+ get_epoch_start(3) * REWARD2
+			+ get_epoch_start(2) * REWARD1
+			+ REWARD0
+	} else if num == 7 {
+		get_epoch_start(7) * REWARD6
+			+ get_epoch_start(6) * REWARD5
+			+ get_epoch_start(5) * REWARD4
+			+ get_epoch_start(4) * REWARD3
+			+ get_epoch_start(3) * REWARD2
+			+ get_epoch_start(2) * REWARD1
+			+ REWARD0
+	} else if num == 8 {
+		get_epoch_start(8) * REWARD7
+			+ get_epoch_start(7) * REWARD6
+			+ get_epoch_start(6) * REWARD5
+			+ get_epoch_start(5) * REWARD4
+			+ get_epoch_start(4) * REWARD3
+			+ get_epoch_start(3) * REWARD2
+			+ get_epoch_start(2) * REWARD1
+			+ REWARD0
+	} else if num == 9 {
+		get_epoch_start(9) * REWARD8
+			+ get_epoch_start(8) * REWARD7
+			+ get_epoch_start(7) * REWARD6
+			+ get_epoch_start(6) * REWARD5
+			+ get_epoch_start(5) * REWARD4
+			+ get_epoch_start(4) * REWARD3
+			+ get_epoch_start(3) * REWARD2
+			+ get_epoch_start(2) * REWARD1
+			+ REWARD0
+	} else {
+		// should not get here
+		1
 	}
 }
 
 /// Calculate block overage based on height and claimed BTCUtxos
-/// TODO: unimplemented
+/// TODO: add in BTCUtxos
 pub fn calc_block_overage(height: u64) -> u64 {
 	if height == 0 {
 		1
+	} else if height <= get_epoch_start(2) {
+		(REWARD1 * height) + get_overage_offset_start_epoch(1)
+	} else if height <= get_epoch_start(3) {
+		(REWARD2 * (height - get_epoch_start(2))) + get_overage_offset_start_epoch(2)
+	} else if height <= get_epoch_start(4) {
+		(REWARD3 * (height - get_epoch_start(3))) + get_overage_offset_start_epoch(3)
+	} else if height <= get_epoch_start(5) {
+		(REWARD4 * (height - get_epoch_start(4))) + get_overage_offset_start_epoch(4)
+	} else if height <= get_epoch_start(6) {
+		(REWARD5 * (height - get_epoch_start(5))) + get_overage_offset_start_epoch(5)
+	} else if height <= get_epoch_start(7) {
+		(REWARD6 * (height - get_epoch_start(6))) + get_overage_offset_start_epoch(6)
+	} else if height <= get_epoch_start(8) {
+		(REWARD7 * (height - get_epoch_start(7))) + get_overage_offset_start_epoch(7)
+	} else if height <= get_epoch_start(9) {
+		(REWARD8 * (height - get_epoch_start(8))) + get_overage_offset_start_epoch(8)
 	} else {
-		(REWARD * height) + 1
+		// we exit here. Up to future generations to decide
+		// how to handle.
+		std::process::exit(0);
 	}
 }
 

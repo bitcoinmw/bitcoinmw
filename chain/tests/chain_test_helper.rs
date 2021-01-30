@@ -20,7 +20,7 @@ use self::core::core::verifier_cache::LruVerifierCache;
 use self::core::core::Block;
 use self::core::genesis;
 use self::core::global::ChainTypes;
-use self::core::libtx::{self, reward};
+use self::core::libtx;
 use self::core::{consensus, global, pow};
 use self::keychain::{ExtKeychainPath, Keychain};
 use self::util::RwLock;
@@ -50,24 +50,11 @@ pub fn init_chain(dir_name: &str, genesis: Block) -> Chain {
 }
 
 /// Build genesis block with reward (non-empty, like we have in mainnet).
-pub fn genesis_block<K>(keychain: &K) -> Block
+pub fn genesis_block<K>(_keychain: &K) -> Block
 where
 	K: Keychain,
 {
-	let key_id = keychain::ExtKeychain::derive_key_id(0, 1, 0, 0, 0);
-	let reward = reward::output(
-		keychain,
-		&libtx::ProofBuilder::new(keychain),
-		&key_id,
-		0,
-		false,
-		0,
-	)
-	.unwrap();
-
-	let ret = genesis::genesis_dev().without_reward();
-
-	ret
+	genesis::genesis_dev().without_reward()
 }
 
 /// Mine a chain of specified length to assist with automated tests.

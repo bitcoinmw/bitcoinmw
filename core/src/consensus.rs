@@ -43,38 +43,38 @@ pub const BLOCK_TIME_SEC: u64 = 60;
 /// Jan 3, 2022. This block will reward 6.25 BTC.
 /// We allocate the remaining of the 6.25 blocks to our
 /// "long tail" which will last 1000 years and start with 3.25.
-/// So initial reward is 0.3125 BMWs for 1,224,600 more blocks.
+/// So initial reward is 0.3125 BCMWs for 1,224,600 more blocks.
 /// This is due to the 1 minute blocks instead of the 10 minute of BTC.
 /// This is approximately Bitcoin's halving schedule, until
 /// the 8th halving, after which the long tail will distribute the
-/// remainder of the BMWs over 1000 years. At block 717,000 there will be
+/// remainder of the BCMWs over 1000 years. At block 717,000 there will be
 /// 19,246,875 BTC.
 /// Note that pre-launch we may recalibrate these numbers
-/// a little. The goal will be to get exactly 21m BMWs, have
+/// a little. The goal will be to get exactly 21m BCMWs, have
 /// a 1000 year long tail, and do a snapshot on January 3, 2022.
 
-/// Snapshot includes 18,918,750,000,000,000 NanoBMWs
+/// Snapshot includes 18,918,750,000,000,000 NanoBCMWs
 
 /// Legacy reward used in testing sometimes
 pub const LEGACY_REWARD: u64 = 60_000_000_000;
-/// Gensis reward 1 NanoBMW
+/// Gensis reward 1 NanoBCMW
 pub const REWARD0: u64 = 0;
 /// First reward 1,224,600 blocks  
-pub const REWARD1: u64 = 312_500_000; // 382,687,500,000,000 NanoBMWs
+pub const REWARD1: u64 = 312_500_000; // 382,687,500,000,000 NanoBCMWs
 /// Second reward for 2,100,000 blocks
-pub const REWARD2: u64 = 156_250_000; // 328,125,000,000,000 NanoBMWs
+pub const REWARD2: u64 = 156_250_000; // 328,125,000,000,000 NanoBCMWs
 /// Third reward for 2,100,000 blocks
-pub const REWARD3: u64 = 78_125_000; // 164,062,500,000,000 NanoBMWs
+pub const REWARD3: u64 = 78_125_000; // 164,062,500,000,000 NanoBCMWs
 /// Fourth reward for 2,100,000 blocks
-pub const REWARD4: u64 = 39_062_500; //  82,031,250,000,000 NanoBMWs
+pub const REWARD4: u64 = 39_062_500; //  82,031,250,000,000 NanoBCMWs
 /// Fifth reward for 2,100,000 blocks
-pub const REWARD5: u64 = 19_531_250; //  41,015,625,000,000 NanoBMWs
+pub const REWARD5: u64 = 19_531_250; //  41,015,625,000,000 NanoBCMWs
 /// Sixth reward for 2,100,000 blocks
-pub const REWARD6: u64 = 9_675_625; //  20,507,812,500,000 NanoBMWs
+pub const REWARD6: u64 = 9_675_625; //  20,507,812,500,000 NanoBCMWs
 /// Seventh reward for 2,100,000 blocks
-pub const REWARD7: u64 = 4_882_812; //  10,253,905,200,000 NanoBMWs
+pub const REWARD7: u64 = 4_882_812; //  10,253,905,200,000 NanoBCMWs
 /// Eigth reward for 525,600,000 blocks
-pub const REWARD8: u64 = 2_000_000; //  105,120,000,0000,000 NanoBMWs
+pub const REWARD8: u64 = 2_000_000; //  105,120,000,0000,000 NanoBCMWs
 
 /// Actual block reward for a given total fee amount
 pub fn reward(fee: u64, height: u64) -> u64 {

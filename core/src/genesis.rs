@@ -226,7 +226,7 @@ mod test {
 		);
 		assert_eq!(
 			gen_bin.hash().to_hex(),
-			"022061f86c75ad5bd66fcd747be34517b661a967097a1807349f61aa03e64b20"
+			"bae5f40c635f86be87ae6da36a9104a3fb976f9e28576548a3c94f6c5fb56a3c"
 		);
 	}
 
@@ -239,11 +239,11 @@ mod test {
 		println!("mainnet genesis full hash: {}\n", gen_bin.hash().to_hex());
 		assert_eq!(
 			gen_hash.to_hex(),
-			"413577e7097c2db9dcaa8e4f872c38554420105cd3c949b6dedda88ea9ede157"
+			"15a215620dd797756eb26af172f8bbdf708fff813293093040c74015aadeb4d7"
 		);
 		assert_eq!(
 			gen_bin.hash().to_hex(),
-			"c313e54bbd149e384e0adeb92c0d238d7d21e2ee3c43d6e49f85fb378ae0611a"
+			"81728722ff925074dfb80fbbfdfb31d0c446fdfce93d8789c1e5fa9b02665805"
 		);
 	}
 }

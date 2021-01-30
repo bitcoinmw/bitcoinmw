@@ -319,41 +319,17 @@ fn adjustment_scenarios() {
 fn test_secondary_pow_ratio() {
 	global::set_local_chain_type(global::ChainTypes::Mainnet);
 
-	assert_eq!(secondary_pow_ratio(1), 90);
-	assert_eq!(secondary_pow_ratio(89), 90);
-	assert_eq!(secondary_pow_ratio(90), 90);
-	assert_eq!(secondary_pow_ratio(91), 90);
-	assert_eq!(secondary_pow_ratio(179), 90);
-	assert_eq!(secondary_pow_ratio(180), 90);
-	assert_eq!(secondary_pow_ratio(181), 90);
-
-	let one_week = 60 * 24 * 7;
-	assert_eq!(secondary_pow_ratio(one_week - 1), 90);
-	assert_eq!(secondary_pow_ratio(one_week), 90);
-	assert_eq!(secondary_pow_ratio(one_week + 1), 90);
-
-	let two_weeks = one_week * 2;
-	assert_eq!(secondary_pow_ratio(two_weeks - 1), 89);
-	assert_eq!(secondary_pow_ratio(two_weeks), 89);
-	assert_eq!(secondary_pow_ratio(two_weeks + 1), 89);
-
-	let t4_fork_height = 64_000;
-	assert_eq!(secondary_pow_ratio(t4_fork_height - 1), 85);
-	assert_eq!(secondary_pow_ratio(t4_fork_height), 85);
-	assert_eq!(secondary_pow_ratio(t4_fork_height + 1), 85);
-
-	let one_year = one_week * 52;
-	assert_eq!(secondary_pow_ratio(one_year), 45);
-
-	let ninety_one_weeks = one_week * 91;
-	assert_eq!(secondary_pow_ratio(ninety_one_weeks - 1), 12);
-	assert_eq!(secondary_pow_ratio(ninety_one_weeks), 12);
-	assert_eq!(secondary_pow_ratio(ninety_one_weeks + 1), 12);
-
-	let two_year = one_year * 2;
-	assert_eq!(secondary_pow_ratio(two_year - 1), 1);
-	assert_eq!(secondary_pow_ratio(two_year), 0);
-	assert_eq!(secondary_pow_ratio(two_year + 1), 0);
+	assert_eq!(secondary_pow_ratio(1), 100);
+	assert_eq!(secondary_pow_ratio(89), 100);
+	assert_eq!(secondary_pow_ratio(90), 100);
+	assert_eq!(secondary_pow_ratio(91), 100);
+	assert_eq!(secondary_pow_ratio(179), 100);
+	assert_eq!(secondary_pow_ratio(180), 100);
+	assert_eq!(secondary_pow_ratio(181), 100);
+	assert_eq!(secondary_pow_ratio(181_100), 100);
+	assert_eq!(secondary_pow_ratio(1_810_102), 100);
+	assert_eq!(secondary_pow_ratio(181_000_000), 100);
+	assert_eq!(secondary_pow_ratio(1_181_000), 100);
 }
 
 #[test]
@@ -374,7 +350,7 @@ fn test_secondary_pow_scale() {
 	hi.is_secondary = true;
 	assert_eq!(
 		secondary_pow_scaling(1, &(0..window).map(|_| hi.clone()).collect::<Vec<_>>()),
-		99
+		100
 	);
 	// all secondary on 1%, factor should go down to bound (divide by 2)
 	assert_eq!(
@@ -382,7 +358,7 @@ fn test_secondary_pow_scale() {
 			2 * YEAR_HEIGHT * 83 / 90,
 			&(0..window).map(|_| hi.clone()).collect::<Vec<_>>()
 		),
-		50
+		100
 	);
 	// same as above, testing lowest bound
 	let mut low_hi = HeaderInfo::from_diff_scaling(Difficulty::from_num(10), MIN_AR_SCALE as u32);
@@ -437,20 +413,12 @@ fn hard_forks() {
 
 	assert_eq!(header_version(0), HeaderVersion(1));
 	assert_eq!(header_version(10), HeaderVersion(1));
-
-	assert_eq!(header_version(HARD_FORK_INTERVAL - 1), HeaderVersion(1));
-	assert_eq!(header_version(HARD_FORK_INTERVAL), HeaderVersion(2));
-	assert_eq!(header_version(HARD_FORK_INTERVAL + 1), HeaderVersion(2));
-
-	assert_eq!(header_version(HARD_FORK_INTERVAL * 2 - 1), HeaderVersion(2));
-	assert_eq!(header_version(HARD_FORK_INTERVAL * 2), HeaderVersion(3));
-	assert_eq!(header_version(HARD_FORK_INTERVAL * 2 + 1), HeaderVersion(3));
-
-	assert_eq!(header_version(HARD_FORK_INTERVAL * 3 - 1), HeaderVersion(3));
-	assert_eq!(header_version(HARD_FORK_INTERVAL * 3), HeaderVersion(4));
-	assert_eq!(header_version(HARD_FORK_INTERVAL * 3 + 1), HeaderVersion(4));
-
-	assert_eq!(header_version(HARD_FORK_INTERVAL * 4 - 1), HeaderVersion(4));
-	assert_eq!(header_version(HARD_FORK_INTERVAL * 4), HeaderVersion(5));
-	assert_eq!(header_version(HARD_FORK_INTERVAL * 4 + 1), HeaderVersion(5));
+	assert_eq!(header_version(100), HeaderVersion(1));
+	assert_eq!(header_version(1_000), HeaderVersion(1));
+	assert_eq!(header_version(10_000), HeaderVersion(1));
+	assert_eq!(header_version(100_000), HeaderVersion(1));
+	assert_eq!(header_version(1_000_001), HeaderVersion(1));
+	assert_eq!(header_version(10_012_456), HeaderVersion(1));
+	assert_eq!(header_version(100_000_000), HeaderVersion(1));
+	assert_eq!(header_version(1_000_000_010), HeaderVersion(1));
 }

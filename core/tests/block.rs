@@ -92,6 +92,9 @@ fn very_empty_block() {
 
 #[test]
 fn block_with_nrd_kernel_pre_post_hf3() {
+	// we update this function to use HeaderVersion always == 1.
+	// We leave original comments for context.
+
 	// automated testing - HF{1|2|3} at block heights {3, 6, 9}
 	// Enable the global NRD feature flag. NRD kernels valid at HF3 at height 9.
 	global::set_local_chain_type(global::ChainTypes::AutomatedTesting);
@@ -128,11 +131,10 @@ fn block_with_nrd_kernel_pre_post_hf3() {
 	);
 
 	// Block is invalid at header version 3 if it contains an NRD kernel.
-	assert_eq!(b.header.version, HeaderVersion(3));
-	assert_eq!(
-		b.validate(&BlindingFactor::zero(), verifier_cache()),
-		Err(Error::NRDKernelPreHF3)
-	);
+	assert_eq!(b.header.version, HeaderVersion(1));
+	assert!(b
+		.validate(&BlindingFactor::zero(), verifier_cache())
+		.is_ok());
 
 	let prev_height = 3 * TESTING_HARD_FORK_INTERVAL - 1;
 	let prev = BlockHeader {
@@ -150,7 +152,7 @@ fn block_with_nrd_kernel_pre_post_hf3() {
 
 	// Block is valid at header version 4 (at HF height) if it contains an NRD kernel.
 	assert_eq!(b.header.height, 3 * TESTING_HARD_FORK_INTERVAL);
-	assert_eq!(b.header.version, HeaderVersion(4));
+	assert_eq!(b.header.version, HeaderVersion(1));
 	assert!(b
 		.validate(&BlindingFactor::zero(), verifier_cache())
 		.is_ok());
@@ -170,98 +172,11 @@ fn block_with_nrd_kernel_pre_post_hf3() {
 	);
 
 	// Block is valid at header version 4 if it contains an NRD kernel.
-	assert_eq!(b.header.version, HeaderVersion(4));
+	// updated to v1
+	assert_eq!(b.header.version, HeaderVersion(1));
 	assert!(b
 		.validate(&BlindingFactor::zero(), verifier_cache())
 		.is_ok());
-}
-
-#[test]
-fn block_with_nrd_kernel_nrd_not_enabled() {
-	// automated testing - HF{1|2|3} at block heights {3, 6, 9}
-	global::set_local_chain_type(global::ChainTypes::AutomatedTesting);
-
-	let keychain = ExtKeychain::from_random_seed(false).unwrap();
-	let builder = ProofBuilder::new(&keychain);
-	let key_id1 = ExtKeychain::derive_key_id(1, 1, 0, 0, 0);
-	let key_id2 = ExtKeychain::derive_key_id(1, 2, 0, 0, 0);
-
-	let tx = build::transaction(
-		KernelFeatures::NoRecentDuplicate {
-			fee: 2.into(),
-			relative_height: NRDRelativeHeight::new(1440).unwrap(),
-		},
-		&[input(7, key_id1), output(5, key_id2)],
-		&keychain,
-		&builder,
-	)
-	.unwrap();
-
-	let txs = &[tx];
-
-	let prev_height = 3 * TESTING_HARD_FORK_INTERVAL - 2;
-	let prev = BlockHeader {
-		height: prev_height,
-		version: consensus::header_version(prev_height),
-		..BlockHeader::default()
-	};
-	let b = new_block(
-		txs,
-		&keychain,
-		&builder,
-		&prev,
-		&ExtKeychain::derive_key_id(1, 1, 0, 0, 0),
-	);
-
-	// Block is invalid as NRD not enabled.
-	assert_eq!(b.header.version, HeaderVersion(3));
-	assert_eq!(
-		b.validate(&BlindingFactor::zero(), verifier_cache()),
-		Err(Error::NRDKernelNotEnabled)
-	);
-
-	let prev_height = 3 * TESTING_HARD_FORK_INTERVAL - 1;
-	let prev = BlockHeader {
-		height: prev_height,
-		version: consensus::header_version(prev_height),
-		..BlockHeader::default()
-	};
-	let b = new_block(
-		txs,
-		&keychain,
-		&builder,
-		&prev,
-		&ExtKeychain::derive_key_id(1, 1, 0, 0, 0),
-	);
-
-	// Block is invalid as NRD not enabled.
-	assert_eq!(b.header.height, 3 * TESTING_HARD_FORK_INTERVAL);
-	assert_eq!(b.header.version, HeaderVersion(4));
-	assert_eq!(
-		b.validate(&BlindingFactor::zero(), verifier_cache()),
-		Err(Error::NRDKernelNotEnabled)
-	);
-
-	let prev_height = 3 * TESTING_HARD_FORK_INTERVAL;
-	let prev = BlockHeader {
-		height: prev_height,
-		version: consensus::header_version(prev_height),
-		..BlockHeader::default()
-	};
-	let b = new_block(
-		txs,
-		&keychain,
-		&builder,
-		&prev,
-		&ExtKeychain::derive_key_id(1, 1, 0, 0, 0),
-	);
-
-	// Block is invalid as NRD not enabled.
-	assert_eq!(b.header.version, HeaderVersion(4));
-	assert_eq!(
-		b.validate(&BlindingFactor::zero(), verifier_cache()),
-		Err(Error::NRDKernelNotEnabled)
-	);
 }
 
 #[test]
@@ -956,11 +871,11 @@ fn test_verify_cut_through_coinbase() -> Result<(), Error> {
 			fee: FeeFields::zero(),
 		},
 		&[
-			build::coinbase_input(consensus::REWARD0, key_id1.clone()),
-			build::coinbase_input(consensus::REWARD0, key_id2.clone()),
-			build::output(60_000_000_000, key_id1.clone()),
-			build::output(50_000_000_000, key_id2.clone()),
-			build::output(10_000_000_000, key_id3.clone()),
+			build::coinbase_input(consensus::REWARD2, key_id1.clone()),
+			build::coinbase_input(consensus::REWARD2, key_id2.clone()),
+			build::output(156_250_000, key_id1.clone()),
+			build::output(126_250_000, key_id2.clone()),
+			build::output(30_000_000, key_id3.clone()),
 		],
 		&keychain,
 		&builder,

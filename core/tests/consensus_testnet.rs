@@ -24,41 +24,41 @@ fn test_secondary_pow_ratio() {
 	global::set_local_chain_type(global::ChainTypes::Testnet);
 	assert_eq!(global::is_testnet(), true);
 
-	assert_eq!(secondary_pow_ratio(1), 90);
-	assert_eq!(secondary_pow_ratio(89), 90);
-	assert_eq!(secondary_pow_ratio(90), 90);
-	assert_eq!(secondary_pow_ratio(91), 90);
-	assert_eq!(secondary_pow_ratio(179), 90);
-	assert_eq!(secondary_pow_ratio(180), 90);
-	assert_eq!(secondary_pow_ratio(181), 90);
+	assert_eq!(secondary_pow_ratio(1), 100);
+	assert_eq!(secondary_pow_ratio(89), 100);
+	assert_eq!(secondary_pow_ratio(90), 100);
+	assert_eq!(secondary_pow_ratio(91), 100);
+	assert_eq!(secondary_pow_ratio(179), 100);
+	assert_eq!(secondary_pow_ratio(180), 100);
+	assert_eq!(secondary_pow_ratio(181), 100);
 
 	let one_week = 60 * 24 * 7;
-	assert_eq!(secondary_pow_ratio(one_week - 1), 90);
-	assert_eq!(secondary_pow_ratio(one_week), 90);
-	assert_eq!(secondary_pow_ratio(one_week + 1), 90);
+	assert_eq!(secondary_pow_ratio(one_week - 1), 100);
+	assert_eq!(secondary_pow_ratio(one_week), 100);
+	assert_eq!(secondary_pow_ratio(one_week + 1), 100);
 
 	let two_weeks = one_week * 2;
-	assert_eq!(secondary_pow_ratio(two_weeks - 1), 89);
-	assert_eq!(secondary_pow_ratio(two_weeks), 89);
-	assert_eq!(secondary_pow_ratio(two_weeks + 1), 89);
+	assert_eq!(secondary_pow_ratio(two_weeks - 1), 100);
+	assert_eq!(secondary_pow_ratio(two_weeks), 100);
+	assert_eq!(secondary_pow_ratio(two_weeks + 1), 100);
 
 	let t4_fork_height = 64_000;
-	assert_eq!(secondary_pow_ratio(t4_fork_height - 1), 85);
-	assert_eq!(secondary_pow_ratio(t4_fork_height), 85);
-	assert_eq!(secondary_pow_ratio(t4_fork_height + 1), 85);
+	assert_eq!(secondary_pow_ratio(t4_fork_height - 1), 100);
+	assert_eq!(secondary_pow_ratio(t4_fork_height), 100);
+	assert_eq!(secondary_pow_ratio(t4_fork_height + 1), 100);
 
 	let one_year = one_week * 52;
-	assert_eq!(secondary_pow_ratio(one_year), 45);
+	assert_eq!(secondary_pow_ratio(one_year), 100);
 
 	let ninety_one_weeks = one_week * 91;
-	assert_eq!(secondary_pow_ratio(ninety_one_weeks - 1), 12);
-	assert_eq!(secondary_pow_ratio(ninety_one_weeks), 12);
-	assert_eq!(secondary_pow_ratio(ninety_one_weeks + 1), 12);
+	assert_eq!(secondary_pow_ratio(ninety_one_weeks - 1), 100);
+	assert_eq!(secondary_pow_ratio(ninety_one_weeks), 100);
+	assert_eq!(secondary_pow_ratio(ninety_one_weeks + 1), 100);
 
 	let two_year = one_year * 2;
-	assert_eq!(secondary_pow_ratio(two_year - 1), 1);
-	assert_eq!(secondary_pow_ratio(two_year), 0);
-	assert_eq!(secondary_pow_ratio(two_year + 1), 0);
+	assert_eq!(secondary_pow_ratio(two_year - 1), 100);
+	assert_eq!(secondary_pow_ratio(two_year), 100);
+	assert_eq!(secondary_pow_ratio(two_year + 1), 100);
 }
 
 #[test]
@@ -72,55 +72,55 @@ fn hard_forks() {
 		header_version(TESTNET_FIRST_HARD_FORK - 1),
 		HeaderVersion(1)
 	);
-	assert_eq!(header_version(TESTNET_FIRST_HARD_FORK), HeaderVersion(2));
+	assert_eq!(header_version(TESTNET_FIRST_HARD_FORK), HeaderVersion(1));
 	assert_eq!(
 		header_version(TESTNET_FIRST_HARD_FORK + 1),
-		HeaderVersion(2)
+		HeaderVersion(1)
 	);
 
 	assert_eq!(
 		header_version(TESTNET_SECOND_HARD_FORK - 1),
-		HeaderVersion(2)
+		HeaderVersion(1)
 	);
-	assert_eq!(header_version(TESTNET_SECOND_HARD_FORK), HeaderVersion(3));
+	assert_eq!(header_version(TESTNET_SECOND_HARD_FORK), HeaderVersion(1));
 	assert_eq!(
 		header_version(TESTNET_SECOND_HARD_FORK + 1),
-		HeaderVersion(3)
+		HeaderVersion(1)
 	);
 
 	assert_eq!(
 		header_version(TESTNET_THIRD_HARD_FORK - 1),
-		HeaderVersion(3)
+		HeaderVersion(1)
 	);
-	assert_eq!(header_version(TESTNET_THIRD_HARD_FORK), HeaderVersion(4));
+	assert_eq!(header_version(TESTNET_THIRD_HARD_FORK), HeaderVersion(1));
 	assert_eq!(
 		header_version(TESTNET_THIRD_HARD_FORK + 1),
-		HeaderVersion(4)
+		HeaderVersion(1)
 	);
 
 	assert_eq!(
 		header_version(TESTNET_FOURTH_HARD_FORK - 1),
-		HeaderVersion(4)
+		HeaderVersion(1)
 	);
-	assert_eq!(header_version(TESTNET_FOURTH_HARD_FORK), HeaderVersion(5));
+	assert_eq!(header_version(TESTNET_FOURTH_HARD_FORK), HeaderVersion(1));
 	assert_eq!(
 		header_version(TESTNET_FOURTH_HARD_FORK + 1),
-		HeaderVersion(5)
+		HeaderVersion(1)
 	);
 
-	assert_eq!(header_version(HARD_FORK_INTERVAL - 1), HeaderVersion(2));
-	assert_eq!(header_version(HARD_FORK_INTERVAL), HeaderVersion(2));
-	assert_eq!(header_version(HARD_FORK_INTERVAL + 1), HeaderVersion(2));
+	assert_eq!(header_version(HARD_FORK_INTERVAL - 1), HeaderVersion(1));
+	assert_eq!(header_version(HARD_FORK_INTERVAL), HeaderVersion(1));
+	assert_eq!(header_version(HARD_FORK_INTERVAL + 1), HeaderVersion(1));
 
-	assert_eq!(header_version(HARD_FORK_INTERVAL * 2 - 1), HeaderVersion(3));
-	assert_eq!(header_version(HARD_FORK_INTERVAL * 2), HeaderVersion(3));
-	assert_eq!(header_version(HARD_FORK_INTERVAL * 2 + 1), HeaderVersion(3));
+	assert_eq!(header_version(HARD_FORK_INTERVAL * 2 - 1), HeaderVersion(1));
+	assert_eq!(header_version(HARD_FORK_INTERVAL * 2), HeaderVersion(1));
+	assert_eq!(header_version(HARD_FORK_INTERVAL * 2 + 1), HeaderVersion(1));
 
-	assert_eq!(header_version(HARD_FORK_INTERVAL * 3 - 1), HeaderVersion(5));
-	assert_eq!(header_version(HARD_FORK_INTERVAL * 3), HeaderVersion(5));
-	assert_eq!(header_version(HARD_FORK_INTERVAL * 3 + 1), HeaderVersion(5));
+	assert_eq!(header_version(HARD_FORK_INTERVAL * 3 - 1), HeaderVersion(1));
+	assert_eq!(header_version(HARD_FORK_INTERVAL * 3), HeaderVersion(1));
+	assert_eq!(header_version(HARD_FORK_INTERVAL * 3 + 1), HeaderVersion(1));
 
-	assert_eq!(header_version(HARD_FORK_INTERVAL * 4 - 1), HeaderVersion(5));
-	assert_eq!(header_version(HARD_FORK_INTERVAL * 4), HeaderVersion(5));
-	assert_eq!(header_version(HARD_FORK_INTERVAL * 4 + 1), HeaderVersion(5));
+	assert_eq!(header_version(HARD_FORK_INTERVAL * 4 - 1), HeaderVersion(1));
+	assert_eq!(header_version(HARD_FORK_INTERVAL * 4), HeaderVersion(1));
+	assert_eq!(header_version(HARD_FORK_INTERVAL * 4 + 1), HeaderVersion(1));
 }

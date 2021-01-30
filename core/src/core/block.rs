@@ -820,9 +820,6 @@ impl Block {
 			if !global::is_nrd_enabled() {
 				return Err(Error::NRDKernelNotEnabled);
 			}
-			if self.header.version < HeaderVersion(4) {
-				return Err(Error::NRDKernelPreHF3);
-			}
 		}
 		Ok(())
 	}

@@ -742,17 +742,21 @@ impl Block {
 		verifier: Arc<RwLock<dyn VerifierCache>>,
 	) -> Result<(), Error> {
 		self.body.validate(Weighting::AsBlock, verifier)?;
-
 		self.verify_kernel_lock_heights()?;
 		self.verify_nrd_kernels_for_header_version()?;
-		self.verify_coinbase()?;
 
-		// take the kernel offset for this block (block offset minus previous) and
-		// verify.body.outputs and kernel sums
-		self.verify_kernel_sums(
-			self.header.overage(),
-			self.block_kernel_offset(prev_kernel_offset.clone())?,
-		)?;
+		// don't verify if there's no outputs/kernels. (Genesis Block)
+		if self.body.outputs.len() > 0 || self.body.kernels.len() > 0 {
+			self.verify_coinbase()?;
+
+			// take the kernel offset for this block (block offset minus previous) and
+			// verify.body.outputs and kernel sums
+
+			self.verify_kernel_sums(
+				self.header.overage(),
+				self.block_kernel_offset(prev_kernel_offset.clone())?,
+			)?;
+		}
 
 		Ok(())
 	}

@@ -65,7 +65,9 @@ where
 	)
 	.unwrap();
 
-	genesis::genesis_dev().with_reward(reward.0, reward.1)
+	let ret = genesis::genesis_dev().without_reward();
+
+	ret
 }
 
 /// Mine a chain of specified length to assist with automated tests.

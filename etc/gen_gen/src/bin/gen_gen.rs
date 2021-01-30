@@ -15,16 +15,12 @@
 //! Main for building the genesis generation utility.
 
 use crate::core::global;
-use grin_core::libtx::proof;
 use grin_core::ser::ProtocolVersion;
-use grin_keychain::ExtKeychain;
-use grin_keychain::Keychain;
-use std::io::{BufRead, Write};
 use std::sync::Arc;
-use std::{fs, io, path};
+use std::{fs, path};
 
 use chrono::prelude::Utc;
-use chrono::{Datelike, Duration, Timelike};
+use chrono::Duration;
 use curl;
 use serde_json;
 
@@ -78,12 +74,7 @@ fn main() {
 	// build the basic parts of the genesis block header
 	let mut gen = core::genesis::genesis_main();
 
-	let keychain: ExtKeychain = Keychain::from_random_seed(false).unwrap();
-	let key_id = ExtKeychain::derive_key_id(3, 1, 0, 0, 0);
-	let builder = proof::ProofBuilder::new(&keychain);
-	let reward = core::libtx::reward::output(&keychain, &builder, &key_id, 0, false, 0).unwrap();
-
-	gen = gen.with_reward(reward.0, reward.1);
+	gen = gen.without_reward();
 
 	{
 		// setup a tmp chain to set block header roots
@@ -154,20 +145,6 @@ fn main() {
 }
 
 fn update_genesis_rs(gen: &core::core::Block) {
-	// set the replacement patterns
-	let mut replacements = vec![];
-	replacements.push((
-		"timestamp".to_string(),
-		format!(
-			"Utc.ymd({}, {}, {}).and_hms({}, {}, {})",
-			gen.header.timestamp.date().year(),
-			gen.header.timestamp.date().month(),
-			gen.header.timestamp.date().day(),
-			gen.header.timestamp.time().hour(),
-			gen.header.timestamp.time().minute(),
-			gen.header.timestamp.time().second(),
-		),
-	));
 	println!(
 		"{}, {}",
 		"prev_root".to_string(),
@@ -208,68 +185,11 @@ fn update_genesis_rs(gen: &core::core::Block) {
 			gen.header.total_kernel_offset.to_hex()
 		),
 	);
-	replacements.push(("nonce".to_string(), format!("{}", gen.header.pow.nonce)));
 	println!(
 		"{}, {}",
 		"nonces".to_string(),
 		format!("vec!{:?}", gen.header.pow.proof.nonces),
 	);
-	println!(
-		"{}, {}",
-		"excess".to_string(),
-		format!(
-			"Commitment::from_vec(util::from_hex({:x?}.to_string()).unwrap())",
-			gen.kernels()[0].excess.to_hex()
-		),
-	);
-	println!(
-		"{}, {}",
-		"excess_sig".to_string(),
-		format!(
-			"Signature::from_raw_data(&{:?}).unwrap()",
-			gen.kernels()[0].excess_sig.to_raw_data().to_vec(),
-		),
-	);
-	println!(
-		"{}, {}",
-		"commit".to_string(),
-		format!(
-			"Commitment::from_vec(util::from_hex({:x?}.to_string()).unwrap())",
-			gen.outputs()[0].commitment().0.to_vec().to_hex()
-		),
-	);
-	println!(
-		"{}, {}",
-		"proof".to_string(),
-		format!("{:?}", gen.outputs()[0].proof.bytes().to_vec()),
-	);
-
-	// check each possible replacement in the file, remove the replacement from
-	// the list when found to avoid double replacements
-	let mut replaced = String::new();
-	{
-		let genesis_rs = fs::File::open(GENESIS_RS_PATH).unwrap();
-		let reader = io::BufReader::new(&genesis_rs);
-		for rline in reader.lines() {
-			let line = rline.unwrap();
-			let mut has_replaced = false;
-			if line.contains("REPLACE") {
-				for (pos, replacement) in replacements.iter().enumerate() {
-					if line.contains(&replacement.0) {
-						replaced.push_str(&format!("{}: {},\n", replacement.0, replacement.1));
-						replacements.remove(pos);
-						has_replaced = true;
-						break;
-					}
-				}
-			}
-			if !has_replaced {
-				replaced.push_str(&format!("{}\n", line));
-			}
-		}
-	}
-	let mut genesis_rs = fs::File::create(GENESIS_RS_PATH).unwrap();
-	genesis_rs.write_all(replaced.as_bytes()).unwrap();
 }
 
 fn setup_chain(dir_name: &str, genesis: core::core::Block) -> chain::Chain {

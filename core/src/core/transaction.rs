@@ -14,7 +14,6 @@
 
 //! Transactions
 
-use crate::core::block::HeaderVersion;
 use crate::core::hash::{DefaultHashable, Hashed};
 use crate::core::verifier_cache::VerifierCache;
 use crate::core::{committed, Committed};
@@ -170,21 +169,13 @@ impl FeeFields {
 	}
 
 	/// Extract fee_shift field
-	pub fn fee_shift(&self, height: u64) -> u8 {
-		if consensus::header_version(height) < HeaderVersion(5) {
-			0
-		} else {
-			((self.0 >> FeeFields::FEE_BITS) & FeeFields::FEE_SHIFT_MASK) as u8
-		}
+	pub fn fee_shift(&self, _height: u64) -> u8 {
+		((self.0 >> FeeFields::FEE_BITS) & FeeFields::FEE_SHIFT_MASK) as u8
 	}
 
 	/// Extract fee field
-	pub fn fee(&self, height: u64) -> u64 {
-		if consensus::header_version(height) < HeaderVersion(5) {
-			self.0
-		} else {
-			self.0 & FeeFields::FEE_MASK
-		}
+	pub fn fee(&self, _height: u64) -> u64 {
+		self.0 & FeeFields::FEE_MASK
 	}
 
 	/// Turn a zero `FeeField` into a `None`, any other value into a `Some`.
@@ -1549,16 +1540,9 @@ impl Transaction {
 	}
 
 	/// Transaction minimum acceptable fee
-	pub fn accept_fee(&self, height: u64) -> u64 {
-		if consensus::header_version(height) < HeaderVersion(5) {
-			Transaction::old_weight_by_iok(
-				self.body.inputs.len() as u64,
-				self.body.outputs.len() as u64,
-				self.body.kernels.len() as u64,
-			) * consensus::MILLI_GRIN
-		} else {
-			self.weight() * global::get_accept_fee_base()
-		}
+	/// Enable from start now
+	pub fn accept_fee(&self, _height: u64) -> u64 {
+		self.weight() * global::get_accept_fee_base()
 	}
 
 	/// Old weight definition for pool acceptance

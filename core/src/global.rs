@@ -18,9 +18,9 @@
 
 use crate::consensus::{
 	graph_weight, HeaderInfo, BASE_EDGE_BITS, BLOCK_TIME_SEC, C32_GRAPH_WEIGHT, COINBASE_MATURITY,
-	CUT_THROUGH_HORIZON, DAY_HEIGHT, DEFAULT_MIN_EDGE_BITS, DMA_WINDOW, GRIN_BASE,
-	INITIAL_DIFFICULTY, KERNEL_WEIGHT, MAX_BLOCK_WEIGHT, OUTPUT_WEIGHT, PROOFSIZE,
-	SECOND_POW_EDGE_BITS, STATE_SYNC_THRESHOLD,
+	CUT_THROUGH_HORIZON, DAY_HEIGHT, DEFAULT_MIN_EDGE_BITS, DMA_WINDOW, INITIAL_DIFFICULTY,
+	KERNEL_WEIGHT, MAX_BLOCK_WEIGHT, OUTPUT_WEIGHT, PROOFSIZE, SECOND_POW_EDGE_BITS,
+	STATE_SYNC_THRESHOLD,
 };
 use crate::pow::{self, new_cuckarood_ctx, new_cuckatoo_ctx, BitVec, PoWContext};
 use crate::ser::ProtocolVersion;
@@ -74,8 +74,8 @@ pub const TESTING_INITIAL_DIFFICULTY: u64 = 1;
 /// Testing max_block_weight (artifically low, just enough to support a few txs).
 pub const TESTING_MAX_BLOCK_WEIGHT: u64 = 250;
 
-/// Default unit of fee per tx weight, making each output cost about a Grincent
-pub const DEFAULT_ACCEPT_FEE_BASE: u64 = GRIN_BASE / 100 / 20; // 500_000
+/// Default unit of fee per tx weight
+pub const DEFAULT_ACCEPT_FEE_BASE: u64 = 165_000; // we lower from grin's value.
 
 /// default Future Time Limit (FTL) of 5 minutes
 pub const DEFAULT_FUTURE_TIME_LIMIT: u64 = 5 * 60;

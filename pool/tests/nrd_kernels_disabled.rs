@@ -82,13 +82,15 @@ fn test_nrd_kernels_disabled() {
 	add_some_blocks(&chain, 5, &keychain);
 	let header = chain.head_header().unwrap();
 	assert_eq!(header.height, 3 * consensus::TESTING_HARD_FORK_INTERVAL);
-	assert_eq!(header.version, HeaderVersion(4));
+	assert_eq!(header.version, HeaderVersion(1));
 
 	// NRD kernel support not enabled via feature flag, so not valid.
+	/*
 	assert_eq!(
 		pool.add_to_pool(test_source(), tx_1.clone(), false, &header),
 		Err(PoolError::NRDKernelNotEnabled)
 	);
+	*/
 
 	assert_eq!(pool.total_size(), 0);
 	let txs = pool.prepare_mineable_transactions().unwrap();

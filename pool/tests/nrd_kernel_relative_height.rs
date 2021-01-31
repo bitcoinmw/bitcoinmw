@@ -72,7 +72,7 @@ fn test_nrd_kernel_relative_height() -> Result<(), PoolError> {
 	let header = chain.head_header().unwrap();
 
 	assert_eq!(header.height, 4 * consensus::TESTING_HARD_FORK_INTERVAL);
-	assert_eq!(header.version, HeaderVersion(5));
+	assert_eq!(header.version, HeaderVersion(1));
 
 	let (tx1, tx2, tx3) = {
 		let mut kernel = TxKernel::with_features(KernelFeatures::NoRecentDuplicate {

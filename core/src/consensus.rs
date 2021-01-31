@@ -55,9 +55,7 @@ pub const BLOCK_TIME_SEC: u64 = 60;
 
 /// Snapshot includes 18,918,750,000,000,000 NanoBCMWs
 
-/// Legacy reward used in testing sometimes
-pub const LEGACY_REWARD: u64 = 60_000_000_000;
-/// Gensis reward 1 NanoBCMW
+/// Gensis reward is 0.
 pub const REWARD0: u64 = 0;
 /// First reward 1,224,600 blocks  
 pub const REWARD1: u64 = 312_500_000; // 382,687,500,000,000 NanoBCMWs

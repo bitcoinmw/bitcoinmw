@@ -41,15 +41,11 @@ use std::fs;
 use std::sync::Arc;
 
 /// Build genesis block with reward (non-empty, like we have in mainnet).
-pub fn genesis_block<K>(keychain: &K) -> Block
+pub fn genesis_block<K>(_keychain: &K) -> Block
 where
 	K: Keychain,
 {
-	let key_id = keychain::ExtKeychain::derive_key_id(1, 0, 0, 0, 0);
-	let reward =
-		reward::output(keychain, &ProofBuilder::new(keychain), &key_id, 0, false, 0).unwrap();
-
-	genesis::genesis_dev().with_reward(reward.0, reward.1)
+	genesis::genesis_dev().without_reward()
 }
 
 pub fn init_chain(dir_name: &str, genesis: Block) -> Chain {
@@ -197,7 +193,7 @@ where
 {
 	let output_sum = output_values.iter().sum::<u64>() as i64;
 
-	let coinbase_reward: u64 = 60_000_000_000;
+	let coinbase_reward: u64 = 312_500_000;
 
 	let fees: i64 = coinbase_reward as i64 - output_sum;
 	assert!(fees >= 0);

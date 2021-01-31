@@ -162,11 +162,11 @@ fn test_verify_cut_through_coinbase() -> Result<(), Error> {
 			fee: FeeFields::zero(),
 		},
 		&[
-			build::coinbase_input(consensus::REWARD0, key_id1.clone()),
-			build::coinbase_input(consensus::REWARD0, key_id2.clone()),
-			build::output(60_000_000_000, key_id1.clone()),
-			build::output(50_000_000_000, key_id2.clone()),
-			build::output(10_000_000_000, key_id3.clone()),
+			build::coinbase_input(consensus::REWARD4, key_id1.clone()),
+			build::coinbase_input(consensus::REWARD4, key_id2.clone()),
+			build::output(39_062_500, key_id1.clone()),
+			build::output(9_062_499, key_id2.clone()),
+			build::output(30_000_001, key_id3.clone()),
 		],
 		&keychain,
 		&builder,
@@ -221,8 +221,8 @@ fn test_fee_fields() -> Result<(), Error> {
 			fee: FeeFields::new(1, 42).unwrap(),
 		},
 		&[
-			build::coinbase_input(consensus::REWARD0, key_id1.clone()),
-			build::output(60_000_000_000 - 84 - 42 - 21, key_id1.clone()),
+			build::coinbase_input(consensus::REWARD3, key_id1.clone()),
+			build::output(78_125_000 - 84 - 42 - 21, key_id1.clone()),
 		],
 		&keychain,
 		&builder,
@@ -237,12 +237,16 @@ fn test_fee_fields() -> Result<(), Error> {
 	assert_eq!(tx.fee(hf4_height), 42);
 	assert_eq!(tx.fee(hf4_height), 42);
 	assert_eq!(tx.shifted_fee(hf4_height), 21);
+
+	// activated at launch
 	assert_eq!(
 		tx.accept_fee(hf4_height - 1),
-		(1 * 4 + 1 * 1 - 1 * 1) * 1_000_000
+		(1 * 1 + 1 * 21 + 1 * 3) * 500_000
 	);
-	assert_eq!(tx.fee(hf4_height - 1), 42 + (1u64 << 40));
-	assert_eq!(tx.shifted_fee(hf4_height - 1), 42 + (1u64 << 40));
+
+	//not used anymore
+	//assert_eq!(tx.fee(hf4_height - 1), 42 + (1u64 << 40));
+	//assert_eq!(tx.shifted_fee(hf4_height - 1), 42 + (1u64 << 40));
 
 	tx.body.kernels.append(&mut vec![
 		TxKernel::with_features(KernelFeatures::Plain {

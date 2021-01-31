@@ -20,9 +20,7 @@
 use self::core::core::hash::{Hash, Hashed};
 use self::core::core::id::ShortId;
 use self::core::core::verifier_cache::VerifierCache;
-use self::core::core::{
-	transaction, Block, BlockHeader, HeaderVersion, OutputIdentifier, Transaction, Weighting,
-};
+use self::core::core::{transaction, Block, BlockHeader, OutputIdentifier, Transaction, Weighting};
 use self::core::global;
 use self::util::RwLock;
 use crate::pool::Pool;
@@ -138,14 +136,11 @@ where
 	fn verify_kernel_variants(
 		&self,
 		tx: &Transaction,
-		header: &BlockHeader,
+		_header: &BlockHeader,
 	) -> Result<(), PoolError> {
 		if tx.kernels().iter().any(|k| k.is_nrd()) {
 			if !global::is_nrd_enabled() {
 				return Err(PoolError::NRDKernelNotEnabled);
-			}
-			if header.version < HeaderVersion(4) {
-				return Err(PoolError::NRDKernelPreHF3);
 			}
 		}
 		Ok(())

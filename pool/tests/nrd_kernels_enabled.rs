@@ -19,12 +19,10 @@ use self::core::core::verifier_cache::LruVerifierCache;
 use self::core::core::{HeaderVersion, KernelFeatures, NRDRelativeHeight};
 use self::core::global;
 use self::keychain::{ExtKeychain, Keychain};
-use self::pool::types::PoolError;
 use self::util::RwLock;
 use crate::common::*;
 use grin_core as core;
 use grin_keychain as keychain;
-use grin_pool as pool;
 use grin_util as util;
 use std::sync::Arc;
 
@@ -61,16 +59,16 @@ fn test_nrd_kernels_enabled() {
 	let tx = test_transaction_spending_coinbase(
 		&keychain,
 		&header_1,
-		vec![1_000 * mg, 2_000 * mg, 3_000 * mg, 4_000 * mg],
+		vec![1 * mg, 2 * mg, 3 * mg, 4 * mg],
 	);
 	add_block(&chain, &[tx], &keychain);
 
 	let tx_1 = test_transaction_with_kernel_features(
 		&keychain,
-		vec![1_000 * mg, 2_000 * mg],
-		vec![2_400 * mg],
+		vec![1_000_000, 2_000_000],
+		vec![2_400_000],
 		KernelFeatures::NoRecentDuplicate {
-			fee: (600 * mg as u32).into(),
+			fee: (600_000 as u32).into(),
 			relative_height: NRDRelativeHeight::new(1440).unwrap(),
 		},
 	);
@@ -78,16 +76,17 @@ fn test_nrd_kernels_enabled() {
 	let header = chain.head_header().unwrap();
 	assert!(header.version < HeaderVersion(4));
 
-	assert_eq!(
-		pool.add_to_pool(test_source(), tx_1.clone(), false, &header),
-		Err(PoolError::NRDKernelPreHF3)
-	);
+	// always enabled now
+	//assert_eq!(
+	//	pool.add_to_pool(test_source(), tx_1.clone(), false, &header),
+	//	Err(PoolError::NRDKernelPreHF3)
+	//);
 
 	// Now mine several more blocks out to HF3
 	add_some_blocks(&chain, 5, &keychain);
 	let header = chain.head_header().unwrap();
 	assert_eq!(header.height, 3 * consensus::TESTING_HARD_FORK_INTERVAL);
-	assert_eq!(header.version, HeaderVersion(4));
+	assert_eq!(header.version, HeaderVersion(1));
 
 	// NRD kernel support enabled via feature flag, so valid.
 	assert_eq!(

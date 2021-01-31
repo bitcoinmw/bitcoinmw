@@ -349,7 +349,7 @@ impl KernelFeatures {
 				fee,
 				relative_height,
 			} => (x, fee, relative_height).hash(),
-			KernelFeatures::BitcoinInit { fee, index, .. } => (x, fee, *index as u64).hash(), // TODO: fix up with other data for hashing
+			KernelFeatures::BitcoinInit { fee, index, .. } => (x, fee, *index as u64).hash(),
 		};
 
 		let msg = secp::Message::from_slice(&hash.as_bytes())?;

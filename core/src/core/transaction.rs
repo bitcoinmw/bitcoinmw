@@ -358,7 +358,7 @@ impl KernelFeatures {
 
 	/// Write tx kernel features out in v1 protocol format.
 	/// Always include the fee_fields and lock_height, writing 0 value if unused.
-	fn write_v1<W: Writer>(&self, writer: &mut W) -> Result<(), ser::Error> {
+	fn _write_v1<W: Writer>(&self, writer: &mut W) -> Result<(), ser::Error> {
 		writer.write_u8(self.as_u8())?;
 		match self {
 			KernelFeatures::Plain { fee } => {
@@ -447,7 +447,7 @@ impl KernelFeatures {
 	// representing lock height or relative height.
 	// Fee and additional data may be unused for some kernel variants but we need
 	// to read these bytes and verify they are 0 if unused.
-	fn read_v1<R: Reader>(reader: &mut R) -> Result<KernelFeatures, ser::Error> {
+	fn _read_v1<R: Reader>(reader: &mut R) -> Result<KernelFeatures, ser::Error> {
 		let feature_byte = reader.read_u8()?;
 		let features = match feature_byte {
 			KernelFeatures::PLAIN_U8 => {
@@ -556,25 +556,15 @@ impl Writeable for KernelFeatures {
 	/// Protocol version may increment rapidly for other unrelated changes.
 	/// So we match on ranges here and not specific version values.
 	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), ser::Error> {
-		// Care must be exercised when writing for hashing purposes.
-		// All kernels are hashed using original v1 serialization strategy.
-		if writer.serialization_mode().is_hash_mode() {
-			return self.write_v1(writer);
-		}
-
-		match writer.protocol_version().value() {
-			0..=1 => self.write_v1(writer),
-			2..=ProtocolVersion::MAX => self.write_v2(writer),
-		}
+		// since we have no legacy v1 kernel data, we always use v2 here.
+		return self.write_v2(writer);
 	}
 }
 
 impl Readable for KernelFeatures {
 	fn read<R: Reader>(reader: &mut R) -> Result<KernelFeatures, ser::Error> {
-		match reader.protocol_version().value() {
-			0..=1 => KernelFeatures::read_v1(reader),
-			2..=ProtocolVersion::MAX => KernelFeatures::read_v2(reader),
-		}
+		// no legacy data so always read v2 here.
+		KernelFeatures::read_v2(reader)
 	}
 }
 

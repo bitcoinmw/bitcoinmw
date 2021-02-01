@@ -388,9 +388,16 @@ impl KernelFeatures {
 				writer.write_empty_bytes(6)?;
 				relative_height.write(writer)?;
 			}
-			_ => {
-				// note KernelFeatures::BITCOIN_INIT_U8 is an error in v1
-				return Err(ser::Error::CorruptedData);
+			KernelFeatures::BitcoinInit {
+				fee,
+				index,
+				btc_sig: _,
+			} => {
+				fee.write(writer)?;
+				index.write(writer)?;
+				//we can't fit the signature in v1
+				//btc_sig.write(writer)?;
+				writer.write_empty_bytes(4)?;
 			}
 		};
 		Ok(())
@@ -477,6 +484,19 @@ impl KernelFeatures {
 				KernelFeatures::NoRecentDuplicate {
 					fee,
 					relative_height,
+				}
+			}
+			KernelFeatures::BITCOIN_INIT_U8 => {
+				let fee = FeeFields::read(reader)?;
+				let index = reader.read_u32()?;
+				// let btc_sig = secp::Signature::read(reader)?;
+				// we can't fit this in v1
+				let btc_sig = secp::Signature::from_raw_data(&[0; 64]).unwrap();
+				reader.read_empty_bytes(4)?;
+				KernelFeatures::BitcoinInit {
+					fee,
+					index,
+					btc_sig,
 				}
 			}
 			_ => {

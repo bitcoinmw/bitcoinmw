@@ -21,6 +21,7 @@ use crate::types::*;
 use crate::util;
 use crate::util::secp::pedersen::Commitment;
 use crate::web::*;
+use bitcoinmw_loader::loader::UtxoData;
 use failure::ResultExt;
 use hyper::{Body, Request, StatusCode};
 use std::sync::Weak;
@@ -29,6 +30,7 @@ use std::sync::Weak;
 /// GET /v1/chain
 pub struct ChainHandler {
 	pub chain: Weak<chain::Chain>,
+	pub utxo_data: Weak<UtxoData>,
 }
 
 impl ChainHandler {
@@ -37,6 +39,21 @@ impl ChainHandler {
 			.head()
 			.map_err(|e| ErrorKind::Internal(format!("can't get head: {}", e)))?;
 		Ok(Tip::from_tip(head))
+	}
+
+	pub fn get_btc_address_status(&self, address: String) -> Result<AddressStatus, Error> {
+		let wval = w(&self.utxo_data)?;
+		let val = wval.addr_map.get(&address);
+		let valid = val.is_some();
+		let mut unclaimed = false; // unclaimed will be false if it's not valid
+		if val.is_some() {
+			unclaimed = *val.unwrap();
+		}
+
+		Ok(AddressStatus {
+			valid: valid,
+			unclaimed: unclaimed,
+		})
 	}
 }
 

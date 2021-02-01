@@ -16,6 +16,7 @@
 //! the peer-to-peer server, the blockchain and the transaction pool) and acts
 //! as a facade.
 
+use bitcoinmw_loader::loader::UtxoData;
 use std::fs::File;
 use std::io::prelude::*;
 use std::path::Path;
@@ -86,6 +87,7 @@ pub struct Server {
 	connect_thread: Option<JoinHandle<()>>,
 	sync_thread: JoinHandle<()>,
 	dandelion_thread: JoinHandle<()>,
+	_utxo_data: Arc<UtxoData>,
 }
 
 impl Server {
@@ -317,6 +319,7 @@ impl Server {
 			println!("Could not load binary: {:?}", res);
 			exit(0);
 		}
+		let _utxo_data = Arc::new(res.unwrap());
 
 		// TODO fix API shutdown and join this thread
 		api::node_apis(
@@ -328,6 +331,7 @@ impl Server {
 			api_secret,
 			foreign_api_secret,
 			tls_conf,
+			_utxo_data.clone(),
 		)?;
 
 		info!("Starting dandelion monitor: {}", &config.api_http_addr);
@@ -355,6 +359,7 @@ impl Server {
 			connect_thread,
 			sync_thread,
 			dandelion_thread,
+			_utxo_data,
 		})
 	}
 

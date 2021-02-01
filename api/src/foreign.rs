@@ -26,10 +26,11 @@ use crate::handlers::version_api::VersionHandler;
 use crate::pool::{self, BlockChain, PoolAdapter, PoolEntry};
 use crate::rest::*;
 use crate::types::{
-	BlockHeaderPrintable, BlockPrintable, LocatedTxKernel, OutputListing, OutputPrintable, Tip,
-	Version,
+	AddressStatus, BlockHeaderPrintable, BlockPrintable, LocatedTxKernel, OutputListing,
+	OutputPrintable, Tip, Version,
 };
 use crate::util::RwLock;
+use bitcoinmw_loader::loader::UtxoData;
 use std::sync::Weak;
 
 /// Main interface into all node API functions.
@@ -48,6 +49,7 @@ where
 	pub chain: Weak<Chain>,
 	pub tx_pool: Weak<RwLock<pool::TransactionPool<B, P, V>>>,
 	pub sync_state: Weak<SyncState>,
+	pub utxo_data: Weak<UtxoData>,
 }
 
 impl<B, P, V> Foreign<B, P, V>
@@ -73,11 +75,13 @@ where
 		chain: Weak<Chain>,
 		tx_pool: Weak<RwLock<pool::TransactionPool<B, P, V>>>,
 		sync_state: Weak<SyncState>,
+		utxo_data: Weak<UtxoData>,
 	) -> Self {
 		Foreign {
 			chain,
 			tx_pool,
 			sync_state,
+			utxo_data,
 		}
 	}
 
@@ -169,8 +173,25 @@ where
 	pub fn get_tip(&self) -> Result<Tip, Error> {
 		let chain_handler = ChainHandler {
 			chain: self.chain.clone(),
+			utxo_data: self.utxo_data.clone(),
 		};
 		chain_handler.get_tip()
+	}
+
+	/// Returns details about the claim status of a btc address
+	///
+	/// # Returns
+	/// * Result Containing:
+	/// * A [`AddressStatus`](types/struct.AddressStatus.html)
+	/// * or [`Error`](struct.Error.html) if an error is encountered.
+	///
+
+	pub fn get_btc_address_status(&self, address: String) -> Result<AddressStatus, Error> {
+		let chain_handler = ChainHandler {
+			chain: self.chain.clone(),
+			utxo_data: self.utxo_data.clone(),
+		};
+		chain_handler.get_btc_address_status(address)
 	}
 
 	/// Returns a [`LocatedTxKernel`](types/struct.LocatedTxKernel.html) based on the kernel excess.

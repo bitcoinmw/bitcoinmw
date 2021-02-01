@@ -22,8 +22,8 @@ use crate::pool::PoolEntry;
 use crate::pool::{BlockChain, PoolAdapter};
 use crate::rest::ErrorKind;
 use crate::types::{
-	BlockHeaderPrintable, BlockPrintable, LocatedTxKernel, OutputListing, OutputPrintable, Tip,
-	Version,
+	AddressStatus, BlockHeaderPrintable, BlockPrintable, LocatedTxKernel, OutputListing,
+	OutputPrintable, Tip, Version,
 };
 use crate::util;
 
@@ -357,6 +357,40 @@ pub trait ForeignRpc: Sync + Send {
 		min_height: Option<u64>,
 		max_height: Option<u64>,
 	) -> Result<LocatedTxKernel, ErrorKind>;
+
+	/**
+		Networked version of [Foreign::get_btc_address_status](struct.Foreign.html#method.get_btc_address_status).
+
+	# Json rpc example
+
+	```
+	# grin_api::doctest_helper_json_rpc_foreign_assert_response!(
+	# r#"
+	{
+		"jsonrpc": "2.0",
+		"method": "get_btc_address_status",
+		"params": ["invalid"],
+		"id": 1
+	}
+	# "#
+	# ,
+	# r#"
+	{
+		"id": 1,
+		"jsonrpc": "2.0",
+		"result": {
+			"Ok": {
+				"unclaimed": false,
+				"valid": false
+			}
+		}
+	}
+	# "#
+	# );
+	```
+	*/
+
+	fn get_btc_address_status(&self, address: String) -> Result<AddressStatus, ErrorKind>;
 
 	/**
 	Networked version of [Foreign::get_outputs](struct.Foreign.html#method.get_outputs).
@@ -783,6 +817,10 @@ where
 
 	fn get_tip(&self) -> Result<Tip, ErrorKind> {
 		Foreign::get_tip(self).map_err(|e| e.kind().clone())
+	}
+
+	fn get_btc_address_status(&self, address: String) -> Result<AddressStatus, ErrorKind> {
+		Foreign::get_btc_address_status(self, address).map_err(|e| e.kind().clone())
 	}
 
 	fn get_kernel(

@@ -43,6 +43,15 @@ pub struct Version {
 	pub block_header_version: u16,
 }
 
+/// The status of a particular btc claim address
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct AddressStatus {
+	// Is this an address that is valid at the snapshot
+	pub valid: bool,
+	// Is the address currently unclaimed
+	pub unclaimed: bool,
+}
+
 /// The state of the current fork tip
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Tip {

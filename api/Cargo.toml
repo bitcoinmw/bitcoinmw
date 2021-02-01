@@ -37,3 +37,4 @@ grin_p2p = { path = "../p2p", version = "5.1.0-alpha.1" }
 grin_pool = { path = "../pool", version = "5.1.0-alpha.1" }
 grin_store = { path = "../store", version = "5.1.0-alpha.1" }
 grin_util = { path = "../util", version = "5.1.0-alpha.1" }
+bitcoinmw_loader = { path = "../utxo", version = "5.1.0-alpha.1" }

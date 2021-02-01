@@ -40,6 +40,7 @@ use crate::router::Router;
 use crate::util::to_base64;
 use crate::util::RwLock;
 use crate::web::*;
+use bitcoinmw_loader::loader::UtxoData;
 use easy_jsonrpc_mw::{Handler, MaybeReply};
 use hyper::{Body, Request, Response, StatusCode};
 use serde::Serialize;
@@ -57,6 +58,7 @@ pub fn node_apis<B, P, V>(
 	api_secret: Option<String>,
 	foreign_api_secret: Option<String>,
 	tls_config: Option<TLSConfig>,
+	utxo_data: Arc<UtxoData>,
 ) -> Result<(), Error>
 where
 	B: BlockChain + 'static,
@@ -100,6 +102,7 @@ where
 		Arc::downgrade(&chain),
 		Arc::downgrade(&tx_pool),
 		Arc::downgrade(&sync_state),
+		Arc::downgrade(&utxo_data),
 	);
 	router.add_route("/v2/foreign", Arc::new(api_handler))?;
 
@@ -182,6 +185,7 @@ where
 	pub chain: Weak<Chain>,
 	pub tx_pool: Weak<RwLock<pool::TransactionPool<B, P, V>>>,
 	pub sync_state: Weak<SyncState>,
+	pub utxo_data: Weak<UtxoData>,
 }
 
 impl<B, P, V> ForeignAPIHandlerV2<B, P, V>
@@ -195,11 +199,13 @@ where
 		chain: Weak<Chain>,
 		tx_pool: Weak<RwLock<pool::TransactionPool<B, P, V>>>,
 		sync_state: Weak<SyncState>,
+		utxo_data: Weak<UtxoData>,
 	) -> Self {
 		ForeignAPIHandlerV2 {
 			chain,
 			tx_pool,
 			sync_state,
+			utxo_data,
 		}
 	}
 }
@@ -215,6 +221,7 @@ where
 			self.chain.clone(),
 			self.tx_pool.clone(),
 			self.sync_state.clone(),
+			self.utxo_data.clone(),
 		);
 
 		Box::pin(async move {

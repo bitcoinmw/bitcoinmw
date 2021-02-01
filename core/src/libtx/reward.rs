@@ -15,6 +15,7 @@
 //! Builds the blinded output and related signature proof for the block
 //! reward.
 use crate::consensus::reward;
+use crate::core::transaction::FeeFields;
 use crate::core::{KernelFeatures, Output, OutputFeatures, TxKernel};
 use crate::libtx::error::Error;
 use crate::libtx::{
@@ -24,7 +25,31 @@ use crate::libtx::{
 use keychain::{Identifier, Keychain, SwitchCommitmentType};
 use util::{secp, static_secp_instance};
 
-/// output a reward output
+/// Output a BTC claim
+pub fn output_btc_claim<K, B>(
+	keychain: &K,
+	builder: &B,
+	key_id: &Identifier,
+	fee: u64,
+	test_mode: bool,
+	value: u64,
+	index: u32,
+	btc_sig: secp::Signature,
+) -> Result<(Output, TxKernel), Error>
+where
+	K: Keychain,
+	B: ProofBuild,
+{
+	let fee = FeeFields::new(1, fee)?;
+	let kernel_features = KernelFeatures::BitcoinInit {
+		fee,
+		index,
+		btc_sig,
+	};
+	output_impl(keychain, builder, key_id, test_mode, value, kernel_features)
+}
+
+/// Output a reward
 pub fn output<K, B>(
 	keychain: &K,
 	builder: &B,
@@ -38,6 +63,29 @@ where
 	B: ProofBuild,
 {
 	let value = reward(fees, height);
+	output_impl(
+		keychain,
+		builder,
+		key_id,
+		test_mode,
+		value,
+		KernelFeatures::Coinbase,
+	)
+}
+
+/// output a reward or BTCCLaim output
+pub fn output_impl<K, B>(
+	keychain: &K,
+	builder: &B,
+	key_id: &Identifier,
+	test_mode: bool,
+	value: u64,
+	features: KernelFeatures,
+) -> Result<(Output, TxKernel), Error>
+where
+	K: Keychain,
+	B: ProofBuild,
+{
 	// TODO: proper support for different switch commitment schemes
 	let switch = SwitchCommitmentType::Regular;
 	let commit = keychain.commit(value, key_id, switch)?;
@@ -50,12 +98,11 @@ where
 
 	let secp = static_secp_instance();
 	let secp = secp.lock();
-	let over_commit = secp.commit_value(reward(fees, height))?;
+	let over_commit = secp.commit_value(value)?;
 	let out_commit = output.commitment();
 	let excess = secp.commit_sum(vec![out_commit], vec![over_commit])?;
 	let pubkey = excess.to_pubkey(&secp)?;
 
-	let features = KernelFeatures::Coinbase;
 	let msg = features.kernel_sig_msg()?;
 	let sig = match test_mode {
 		true => {
@@ -76,7 +123,7 @@ where
 	};
 
 	let kernel = TxKernel {
-		features: KernelFeatures::Coinbase,
+		features,
 		excess,
 		excess_sig: sig,
 	};

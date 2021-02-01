@@ -46,7 +46,15 @@ where
 		index,
 		btc_sig,
 	};
-	output_impl(keychain, builder, key_id, test_mode, value, kernel_features)
+	output_impl(
+		keychain,
+		builder,
+		key_id,
+		test_mode,
+		value,
+		kernel_features,
+		OutputFeatures::Plain,
+	)
 }
 
 /// Output a reward
@@ -70,6 +78,7 @@ where
 		test_mode,
 		value,
 		KernelFeatures::Coinbase,
+		OutputFeatures::Coinbase,
 	)
 }
 
@@ -81,6 +90,7 @@ pub fn output_impl<K, B>(
 	test_mode: bool,
 	value: u64,
 	features: KernelFeatures,
+	output_features: OutputFeatures,
 ) -> Result<(Output, TxKernel), Error>
 where
 	K: Keychain,
@@ -94,7 +104,7 @@ where
 
 	let proof = proof::create(keychain, builder, value, key_id, switch, commit, None)?;
 
-	let output = Output::new(OutputFeatures::Coinbase, commit, proof);
+	let output = Output::new(output_features, commit, proof);
 
 	let secp = static_secp_instance();
 	let secp = secp.lock();

@@ -299,6 +299,8 @@ pub enum KernelFeatures {
 		fee: FeeFields,
 		/// Index into the UTXO data array
 		index: u32,
+		/// Amount in NanoBMWs
+		amount: u64,
 		/// Signature of (excess, excess_sig, index, and fee) with btc key.
 		btc_sig: secp::Signature,
 	},
@@ -356,53 +358,6 @@ impl KernelFeatures {
 		Ok(msg)
 	}
 
-	/// Write tx kernel features out in v1 protocol format.
-	/// Always include the fee_fields and lock_height, writing 0 value if unused.
-	fn _write_v1<W: Writer>(&self, writer: &mut W) -> Result<(), ser::Error> {
-		writer.write_u8(self.as_u8())?;
-		match self {
-			KernelFeatures::Plain { fee } => {
-				fee.write(writer)?;
-				// Write "empty" bytes for feature specific data (8 bytes).
-				writer.write_empty_bytes(8)?;
-			}
-			KernelFeatures::Coinbase => {
-				// Write "empty" bytes for fee_fields (8 bytes) and feature specific data (8 bytes).
-				writer.write_empty_bytes(16)?;
-			}
-			KernelFeatures::HeightLocked { fee, lock_height } => {
-				fee.write(writer)?;
-				// 8 bytes of feature specific data containing the lock height as big-endian u64.
-				writer.write_u64(*lock_height)?;
-			}
-			KernelFeatures::NoRecentDuplicate {
-				fee,
-				relative_height,
-			} => {
-				fee.write(writer)?;
-
-				// 8 bytes of feature specific data. First 6 bytes are empty.
-				// Last 2 bytes contain the relative lock height as big-endian u16.
-				// Note: This is effectively the same as big-endian u64.
-				// We write "empty" bytes explicitly rather than quietly casting the u16 -> u64.
-				writer.write_empty_bytes(6)?;
-				relative_height.write(writer)?;
-			}
-			KernelFeatures::BitcoinInit {
-				fee,
-				index,
-				btc_sig: _,
-			} => {
-				fee.write(writer)?;
-				index.write(writer)?;
-				//we can't fit the signature in v1
-				//btc_sig.write(writer)?;
-				writer.write_empty_bytes(4)?;
-			}
-		};
-		Ok(())
-	}
-
 	/// Write tx kernel features out in v2 protocol format.
 	/// These are variable sized based on feature variant.
 	/// Only write fee_fields out for feature variants that support it.
@@ -433,78 +388,16 @@ impl KernelFeatures {
 			KernelFeatures::BitcoinInit {
 				fee,
 				index,
+				amount,
 				btc_sig,
 			} => {
 				fee.write(writer)?;
 				index.write(writer)?;
+				amount.write(writer)?;
 				btc_sig.write(writer)?;
 			}
 		}
 		Ok(())
-	}
-
-	// Always read feature byte, 8 bytes for fee_fields and 8 bytes for additional data
-	// representing lock height or relative height.
-	// Fee and additional data may be unused for some kernel variants but we need
-	// to read these bytes and verify they are 0 if unused.
-	fn _read_v1<R: Reader>(reader: &mut R) -> Result<KernelFeatures, ser::Error> {
-		let feature_byte = reader.read_u8()?;
-		let features = match feature_byte {
-			KernelFeatures::PLAIN_U8 => {
-				let fee = FeeFields::read(reader)?;
-				// 8 "empty" bytes as additional data is not used.
-				reader.read_empty_bytes(8)?;
-				KernelFeatures::Plain { fee }
-			}
-			KernelFeatures::COINBASE_U8 => {
-				// 8 "empty" bytes as fee_fields is not used.
-				// 8 "empty" bytes as additional data is not used.
-				reader.read_empty_bytes(16)?;
-				KernelFeatures::Coinbase
-			}
-			KernelFeatures::HEIGHT_LOCKED_U8 => {
-				let fee = FeeFields::read(reader)?;
-				// 8 bytes of feature specific data, lock height as big-endian u64.
-				let lock_height = reader.read_u64()?;
-				KernelFeatures::HeightLocked { fee, lock_height }
-			}
-			KernelFeatures::NO_RECENT_DUPLICATE_U8 => {
-				// NRD kernels are invalid if NRD feature flag is not enabled.
-				if !global::is_nrd_enabled() {
-					return Err(ser::Error::CorruptedData);
-				}
-
-				let fee = FeeFields::read(reader)?;
-
-				// 8 bytes of feature specific data.
-				// The first 6 bytes must be "empty".
-				// The last 2 bytes is the relative height as big-endian u16.
-				reader.read_empty_bytes(6)?;
-				let relative_height = NRDRelativeHeight::read(reader)?;
-				KernelFeatures::NoRecentDuplicate {
-					fee,
-					relative_height,
-				}
-			}
-			KernelFeatures::BITCOIN_INIT_U8 => {
-				let fee = FeeFields::read(reader)?;
-				let index = reader.read_u32()?;
-				// let btc_sig = secp::Signature::read(reader)?;
-				// we can't fit this in v1
-				let btc_sig = secp::Signature::from_raw_data(&[0; 64]).unwrap();
-				reader.read_empty_bytes(4)?;
-				KernelFeatures::BitcoinInit {
-					fee,
-					index,
-					btc_sig,
-				}
-			}
-			_ => {
-				// note KernelFeatures::BITCOIN_INIT_U8 is an error in v1
-				return Err(ser::Error::CorruptedData);
-			}
-		};
-		Ok(features)
 	}
 
 	// V2 kernels only expect bytes specific to each variant.
@@ -537,10 +430,12 @@ impl KernelFeatures {
 			KernelFeatures::BITCOIN_INIT_U8 => {
 				let fee = FeeFields::read(reader)?;
 				let index = reader.read_u32()?;
+				let amount = reader.read_u64()?;
 				let btc_sig = secp::Signature::read(reader)?;
 				KernelFeatures::BitcoinInit {
 					fee,
 					index,
+					amount,
 					btc_sig,
 				}
 			}
@@ -1124,7 +1019,20 @@ impl TransactionBody {
 	}
 
 	fn overage(&self, height: u64) -> i64 {
-		self.fee(height) as i64
+		let mut btc_init_amt = 0;
+
+		for kernel in self.kernels.clone() {
+			match kernel.features {
+				KernelFeatures::BitcoinInit {
+					fee, index, amount, ..
+				} => {
+					btc_init_amt -= amount;
+				}
+				_ => {}
+			}
+		}
+
+		(btc_init_amt + self.fee(height)) as i64
 	}
 
 	/// Calculate weight of transaction using block weighing

@@ -32,7 +32,7 @@ pub fn output_btc_claim<K, B>(
 	key_id: &Identifier,
 	fee: u64,
 	test_mode: bool,
-	value: u64,
+	amount: u64,
 	index: u32,
 	btc_sig: secp::Signature,
 ) -> Result<(Output, TxKernel), Error>
@@ -40,10 +40,11 @@ where
 	K: Keychain,
 	B: ProofBuild,
 {
-	let fee = FeeFields::new(1, fee)?;
+	let ff = FeeFields::new(1, fee)?;
 	let kernel_features = KernelFeatures::BitcoinInit {
-		fee,
+		fee: ff,
 		index,
+		amount,
 		btc_sig,
 	};
 	output_impl(
@@ -51,7 +52,7 @@ where
 		builder,
 		key_id,
 		test_mode,
-		value,
+		amount - fee,
 		kernel_features,
 		OutputFeatures::Plain,
 	)

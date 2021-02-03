@@ -110,7 +110,7 @@ pub struct AddressInfo {
 #[derive(Debug)]
 pub struct UtxoData {
 	pub map: HashMap<u32, AddressInfo>,
-	pub addr_map: HashMap<String, bool>,
+	pub addr_map: HashMap<String, u64>,
 }
 
 pub fn load_binary(binary: &str) -> Result<UtxoData, Error> {
@@ -182,9 +182,9 @@ pub fn load_binary(binary: &str) -> Result<UtxoData, Error> {
 	}
 
 	// map of address to claim status
-	let mut addr_map: HashMap<String, bool> = HashMap::new();
+	let mut addr_map: HashMap<String, u64> = HashMap::new();
 	for (_, value) in &map {
-		addr_map.insert(value.address.clone(), true);
+		addr_map.insert(value.address.clone(), value.sats);
 	}
 
 	let ret = UtxoData {

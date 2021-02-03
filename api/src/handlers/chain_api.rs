@@ -46,13 +46,16 @@ impl ChainHandler {
 		let val = wval.addr_map.get(&address);
 		let valid = val.is_some();
 		let mut unclaimed = false; // unclaimed will be false if it's not valid
+		let mut sats = 0;
 		if val.is_some() {
-			unclaimed = *val.unwrap();
+			unclaimed = true;
+			sats = *val.unwrap();
 		}
 
 		Ok(AddressStatus {
-			valid: valid,
-			unclaimed: unclaimed,
+			valid,
+			unclaimed,
+			sats,
 		})
 	}
 }

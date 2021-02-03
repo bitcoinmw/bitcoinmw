@@ -70,9 +70,10 @@ fn simple_tx_ser() {
 	};
 
 	// Explicit protocol version 1.
-	let mut vec = Vec::new();
-	ser::serialize(&mut vec, ser::ProtocolVersion(1), &tx).expect("serialization failed");
-	assert_eq!(vec.len(), 955);
+	// no longer valid because always v2
+	//let mut vec = Vec::new();
+	//ser::serialize(&mut vec, ser::ProtocolVersion(1), &tx).expect("serialization failed");
+	//assert_eq!(vec.len(), 955);
 
 	// Explicit protocol version 2.
 	let mut vec = Vec::new();

@@ -14,7 +14,9 @@
 
 //! Builds the blinded output and related signature proof for the block
 //! reward.
+
 use crate::consensus::reward;
+use crate::core::transaction::build_btc_init_kernel_feature;
 use crate::core::transaction::FeeFields;
 use crate::core::{KernelFeatures, Output, OutputFeatures, TxKernel};
 use crate::libtx::error::Error;
@@ -22,6 +24,7 @@ use crate::libtx::{
 	aggsig,
 	proof::{self, ProofBuild},
 };
+use bitcoin::secp256k1::recovery::RecoverableSignature;
 use keychain::{Identifier, Keychain, SwitchCommitmentType};
 use util::{secp, static_secp_instance};
 
@@ -34,19 +37,14 @@ pub fn output_btc_claim<K, B>(
 	test_mode: bool,
 	amount: u64,
 	index: u32,
-	btc_sig: secp::Signature,
+	btc_sig: RecoverableSignature,
 ) -> Result<(Output, TxKernel), Error>
 where
 	K: Keychain,
 	B: ProofBuild,
 {
-	let ff = FeeFields::new(1, fee)?;
-	let kernel_features = KernelFeatures::BitcoinInit {
-		fee: ff,
-		index,
-		amount,
-		btc_sig,
-	};
+	let ff = FeeFields::new(0, fee)?;
+	let kernel_features = build_btc_init_kernel_feature(ff, index, amount, btc_sig)?;
 	output_impl(
 		keychain,
 		builder,

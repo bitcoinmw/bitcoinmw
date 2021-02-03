@@ -224,9 +224,10 @@ mod test {
 			gen_hash.to_hex(),
 			"edc758c1370d43e1d733f70f58cf187c3be8242830429b1676b89fd91ccf2dab"
 		);
+
 		assert_eq!(
 			gen_bin.hash().to_hex(),
-			"bae5f40c635f86be87ae6da36a9104a3fb976f9e28576548a3c94f6c5fb56a3c"
+			"2c97bed035cbe7f11ae654ca9248964a9ccd1dd3515958379221d87efd026ddf"
 		);
 	}
 

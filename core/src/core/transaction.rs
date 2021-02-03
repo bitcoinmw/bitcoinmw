@@ -23,6 +23,8 @@ use crate::ser::{
 	Writeable, Writer,
 };
 use crate::{consensus, global};
+use bitcoin::secp256k1::recovery::RecoverableSignature;
+use bitcoin::secp256k1::recovery::RecoveryId;
 use enum_primitive::FromPrimitive;
 use keychain::{self, BlindingFactor};
 use serde::de;
@@ -301,9 +303,134 @@ pub enum KernelFeatures {
 		index: u32,
 		/// Amount in NanoBMWs
 		amount: u64,
-		/// Signature of (excess, excess_sig, index, and fee) with btc key.
-		btc_sig: secp::Signature,
+		/// Signature of (excess, excess_sig, index, and fee) with btc key. p1
+		btc_sig_part1: u64,
+		/// Signature of (excess, excess_sig, index, and fee) with btc key. p2
+		btc_sig_part2: u64,
+		/// Signature of (excess, excess_sig, index, and fee) with btc key. p3
+		btc_sig_part3: u64,
+		/// Signature of (excess, excess_sig, index, and fee) with btc key. p4
+		btc_sig_part4: u64,
+		/// Signature of (excess, excess_sig, index, and fee) with btc key. p5
+		btc_sig_part5: u64,
+		/// Signature of (excess, excess_sig, index, and fee) with btc key. p6
+		btc_sig_part6: u64,
+		/// Signature of (excess, excess_sig, index, and fee) with btc key. p7
+		btc_sig_part7: u64,
+		/// Signature of (excess, excess_sig, index, and fee) with btc key. p8
+		btc_sig_part8: u64,
+
+		/// Signature of (excess, excess_sig, index, and fee) with btc key. rec bit
+		btc_recovery_bit: u8,
 	},
+}
+
+/// Create a BitcoinInit Kernel Feature based on inputs
+pub fn build_btc_init_kernel_feature(
+	fee: FeeFields,
+	index: u32,
+	amount: u64,
+	btc_sig: RecoverableSignature,
+) -> Result<KernelFeatures, Error> {
+	let (rec_id, data) = btc_sig.serialize_compact();
+
+	let mut tmp = [0 as u8; 8];
+
+	tmp.clone_from_slice(&data[0..8]);
+	let btc_sig_part1 = u64::from_le_bytes(tmp);
+
+	tmp.clone_from_slice(&data[8..16]);
+	let btc_sig_part2 = u64::from_le_bytes(tmp);
+
+	tmp.clone_from_slice(&data[16..24]);
+	let btc_sig_part3 = u64::from_le_bytes(tmp);
+
+	tmp.clone_from_slice(&data[24..32]);
+	let btc_sig_part4 = u64::from_le_bytes(tmp);
+
+	tmp.clone_from_slice(&data[32..40]);
+	let btc_sig_part5 = u64::from_le_bytes(tmp);
+
+	tmp.clone_from_slice(&data[40..48]);
+	let btc_sig_part6 = u64::from_le_bytes(tmp);
+
+	tmp.clone_from_slice(&data[48..56]);
+	let btc_sig_part7 = u64::from_le_bytes(tmp);
+
+	tmp.clone_from_slice(&data[56..64]);
+	let btc_sig_part8 = u64::from_le_bytes(tmp);
+
+	// TODO: handle errors
+	let btc_recovery_bit = rec_id.to_i32().try_into().unwrap();
+
+	Ok(KernelFeatures::BitcoinInit {
+		fee,
+		index,
+		amount,
+		btc_sig_part1,
+		btc_sig_part2,
+		btc_sig_part3,
+		btc_sig_part4,
+		btc_sig_part5,
+		btc_sig_part6,
+		btc_sig_part7,
+		btc_sig_part8,
+		btc_recovery_bit,
+	})
+}
+
+/// Get a RecoverableSignature from KernelFeatures::BitcoinInit
+pub fn get_recoverable_signature(
+	kf: KernelFeatures,
+) -> Result<RecoverableSignature, bitcoin::secp256k1::Error> {
+	match kf {
+		KernelFeatures::BitcoinInit {
+			fee: _,
+			index: _,
+			amount: _,
+			btc_sig_part1,
+			btc_sig_part2,
+			btc_sig_part3,
+			btc_sig_part4,
+			btc_sig_part5,
+			btc_sig_part6,
+			btc_sig_part7,
+			btc_sig_part8,
+			btc_recovery_bit,
+		} => {
+			let mut data = [0 as u8; 64];
+
+			let tmp = btc_sig_part1.to_le_bytes();
+			data[0..8].clone_from_slice(&tmp);
+
+			let tmp = btc_sig_part2.to_le_bytes();
+			data[8..16].clone_from_slice(&tmp);
+
+			let tmp = btc_sig_part3.to_le_bytes();
+			data[16..24].clone_from_slice(&tmp);
+
+			let tmp = btc_sig_part4.to_le_bytes();
+			data[24..32].clone_from_slice(&tmp);
+
+			let tmp = btc_sig_part5.to_le_bytes();
+			data[32..40].clone_from_slice(&tmp);
+
+			let tmp = btc_sig_part6.to_le_bytes();
+			data[40..48].clone_from_slice(&tmp);
+
+			let tmp = btc_sig_part7.to_le_bytes();
+			data[48..56].clone_from_slice(&tmp);
+
+			let tmp = btc_sig_part8.to_le_bytes();
+			data[56..64].clone_from_slice(&tmp);
+
+			match RecoveryId::from_i32(btc_recovery_bit.into()) {
+				Ok(r) => RecoverableSignature::from_compact(&data, r),
+				Err(_) => Err(bitcoin::secp256k1::Error::InvalidMessage),
+			}
+		}
+		_ => Err(bitcoin::secp256k1::Error::InvalidMessage),
+	}
 }
 
 impl KernelFeatures {
@@ -389,12 +516,28 @@ impl KernelFeatures {
 				fee,
 				index,
 				amount,
-				btc_sig,
+				btc_sig_part1,
+				btc_sig_part2,
+				btc_sig_part3,
+				btc_sig_part4,
+				btc_sig_part5,
+				btc_sig_part6,
+				btc_sig_part7,
+				btc_sig_part8,
+				btc_recovery_bit,
 			} => {
 				fee.write(writer)?;
 				index.write(writer)?;
 				amount.write(writer)?;
-				btc_sig.write(writer)?;
+				btc_sig_part1.write(writer)?;
+				btc_sig_part2.write(writer)?;
+				btc_sig_part3.write(writer)?;
+				btc_sig_part4.write(writer)?;
+				btc_sig_part5.write(writer)?;
+				btc_sig_part6.write(writer)?;
+				btc_sig_part7.write(writer)?;
+				btc_sig_part8.write(writer)?;
+				btc_recovery_bit.write(writer)?;
 			}
 		}
 		Ok(())
@@ -431,12 +574,28 @@ impl KernelFeatures {
 				let fee = FeeFields::read(reader)?;
 				let index = reader.read_u32()?;
 				let amount = reader.read_u64()?;
-				let btc_sig = secp::Signature::read(reader)?;
+				let btc_sig_part1 = reader.read_u64()?;
+				let btc_sig_part2 = reader.read_u64()?;
+				let btc_sig_part3 = reader.read_u64()?;
+				let btc_sig_part4 = reader.read_u64()?;
+				let btc_sig_part5 = reader.read_u64()?;
+				let btc_sig_part6 = reader.read_u64()?;
+				let btc_sig_part7 = reader.read_u64()?;
+				let btc_sig_part8 = reader.read_u64()?;
+				let btc_recovery_bit = reader.read_u8()?;
 				KernelFeatures::BitcoinInit {
 					fee,
 					index,
 					amount,
-					btc_sig,
+					btc_sig_part1,
+					btc_sig_part2,
+					btc_sig_part3,
+					btc_sig_part4,
+					btc_sig_part5,
+					btc_sig_part6,
+					btc_sig_part7,
+					btc_sig_part8,
+					btc_recovery_bit,
 				}
 			}
 			_ => {
@@ -504,6 +663,8 @@ pub enum Error {
 	IncorrectSignature,
 	/// Underlying serialization error.
 	Serialization(ser::Error),
+	/// The type of Kernel Features was not expected here.
+	UnexpectedKernelFeaturesType,
 }
 
 impl error::Error for Error {
@@ -1024,7 +1185,10 @@ impl TransactionBody {
 		for kernel in self.kernels.clone() {
 			match kernel.features {
 				KernelFeatures::BitcoinInit {
-					fee, index, amount, ..
+					fee: _,
+					index: _,
+					amount,
+					..
 				} => {
 					btc_init_amt -= amount;
 				}

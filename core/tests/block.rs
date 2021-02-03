@@ -472,9 +472,10 @@ fn block_single_tx_serialized_size() {
 	assert_eq!(vec.len(), 2_670);
 
 	// Protocol version 1 (fixed size kernels)
-	let mut vec = Vec::new();
-	ser::serialize(&mut vec, ser::ProtocolVersion(1), &b).expect("serialization failed");
-	assert_eq!(vec.len(), 2_694);
+	//let mut vec = Vec::new();
+	//this test is no longer valid because v2 is always used
+	//ser::serialize(&mut vec, ser::ProtocolVersion(1), &b).expect("serialization failed");
+	//assert_eq!(vec.len(), 2_694);
 
 	// Check we can also serialize a v2 compatibility block in v3 protocol version
 	// without needing to explicitly convert the block.

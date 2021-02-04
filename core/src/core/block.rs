@@ -402,7 +402,7 @@ impl BlockHeader {
 
 	/// The "overage" to use when verifying the kernel sums.
 	/// For a block header the overage is 0 - reward for a given height.
-	pub fn overage(&self) -> i64 {
+	pub fn overage_internal(&self) -> i64 {
 		(calc_block_reward(self.height) as i64)
 			.checked_neg()
 			.unwrap_or(0)
@@ -580,6 +580,22 @@ impl Block {
 		}
 
 		Ok(block)
+	}
+
+	/// Return the overage for this block (including the BTC Kernels.
+	pub fn overage(&self) -> i64 {
+		let mut overage = self.header.overage_internal();
+
+		for kernel in self.body.kernels() {
+			match kernel.features {
+				KernelFeatures::BitcoinInit { amount, .. } => {
+					overage += (amount as i64).checked_neg().unwrap_or(0)
+				}
+				_ => {}
+			}
+		}
+
+		overage
 	}
 
 	/// Hydrate a block from a compact block.
@@ -786,7 +802,7 @@ impl Block {
 			// verify.body.outputs and kernel sums
 
 			self.verify_kernel_sums(
-				self.header.overage(),
+				self.overage(),
 				self.block_kernel_offset(prev_kernel_offset.clone())?,
 			)?;
 		}

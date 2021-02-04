@@ -1812,10 +1812,8 @@ fn setup_head(
 			batch.save_body_head(&Tip::from_header(&genesis.header))?;
 
 			if !genesis.kernels().is_empty() {
-				let (utxo_sum, kernel_sum) = (sums, genesis as &dyn Committed).verify_kernel_sums(
-					genesis.header.overage(),
-					genesis.header.total_kernel_offset(),
-				)?;
+				let (utxo_sum, kernel_sum) = (sums, genesis as &dyn Committed)
+					.verify_kernel_sums(genesis.overage(), genesis.header.total_kernel_offset())?;
 				sums = BlockSums {
 					utxo_sum,
 					kernel_sum,

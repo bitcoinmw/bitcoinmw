@@ -440,7 +440,7 @@ fn verify_block_sums(b: &Block, batch: &store::Batch<'_>) -> Result<(), Error> {
 
 	// Overage is based purely on the new block.
 	// Previous block_sums have taken all previous overage into account.
-	let overage = b.header.overage();
+	let overage = b.overage();
 
 	// Offset on the other hand is the total kernel offset from the new block.
 	let offset = b.header.total_kernel_offset();

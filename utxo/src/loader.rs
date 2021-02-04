@@ -7,6 +7,7 @@ use bech32::ToBase32;
 use bech32::WriteBase32;
 use bitcoin_hashes::sha256d;
 use bitcoin_hashes::Hash;
+use bitvec::prelude::*;
 use byteorder::{LittleEndian, ReadBytesExt};
 use rust_base58::ToBase58;
 use std::borrow::Cow;
@@ -111,6 +112,7 @@ pub struct AddressInfo {
 pub struct UtxoData {
 	pub map: HashMap<u32, AddressInfo>,
 	pub addr_map: HashMap<String, u64>,
+	pub claims_bitmap: BitVec,
 }
 
 pub fn load_binary(binary: &str) -> Result<UtxoData, Error> {
@@ -187,9 +189,13 @@ pub fn load_binary(binary: &str) -> Result<UtxoData, Error> {
 		addr_map.insert(value.address.clone(), value.sats);
 	}
 
+	let mut claims_bitmap: BitVec = BitVec::new();
+	claims_bitmap.resize(map.len(), false);
+
 	let ret = UtxoData {
-		map: map,
-		addr_map: addr_map,
+		map,
+		addr_map,
+		claims_bitmap,
 	};
 	Ok(ret)
 }

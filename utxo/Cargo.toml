@@ -13,6 +13,7 @@ edition = "2018"
 byteorder = { version = "1.4.2" }
 rust-base58 = { version = "0.0.4" }
 bitcoin_hashes = { version = "0.9.1" }
+bitvec = { version = "0.20.1" }
 bech32 = { version = "0.7.2" }
 log = { version = "0.4" }
 

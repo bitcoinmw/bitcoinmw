@@ -427,7 +427,7 @@ fn empty_block_serialized_size() {
 	let b = new_block(&[], &keychain, &builder, &prev, &key_id);
 	let mut vec = Vec::new();
 	ser::serialize_default(&mut vec, &b).expect("serialization failed");
-	assert_eq!(vec.len(), 1_096);
+	assert_eq!(vec.len(), 1_096 + 8);
 }
 
 #[test]
@@ -443,12 +443,12 @@ fn block_single_tx_serialized_size() {
 	// Default protocol version (3)
 	let mut vec = Vec::new();
 	ser::serialize_default(&mut vec, &b).expect("serialization failed");
-	assert_eq!(vec.len(), 2_669);
+	assert_eq!(vec.len(), 2_669 + 8);
 
 	// Protocol version 3
 	let mut vec = Vec::new();
 	ser::serialize(&mut vec, ser::ProtocolVersion(3), &b).expect("serialization failed");
-	assert_eq!(vec.len(), 2_669);
+	assert_eq!(vec.len(), 2_669 + 8);
 
 	// Protocol version 2.
 	// Note: block must be in "v2" compatibility with "features and commit" inputs for this.
@@ -469,24 +469,24 @@ fn block_single_tx_serialized_size() {
 	// Protocol version 2
 	let mut vec = Vec::new();
 	ser::serialize(&mut vec, ser::ProtocolVersion(2), &b).expect("serialization failed");
-	assert_eq!(vec.len(), 2_670);
+	assert_eq!(vec.len(), 2_670 + 8);
 
 	// Protocol version 1 (fixed size kernels)
 	//let mut vec = Vec::new();
 	//this test is no longer valid because v2 is always used
 	//ser::serialize(&mut vec, ser::ProtocolVersion(1), &b).expect("serialization failed");
-	//assert_eq!(vec.len(), 2_694);
+	//assert_eq!(vec.len(), 2_694+8);
 
 	// Check we can also serialize a v2 compatibility block in v3 protocol version
 	// without needing to explicitly convert the block.
 	let mut vec = Vec::new();
 	ser::serialize(&mut vec, ser::ProtocolVersion(3), &b).expect("serialization failed");
-	assert_eq!(vec.len(), 2_669);
+	assert_eq!(vec.len(), 2_669 + 8);
 
 	// Default protocol version (3) for completeness
 	let mut vec = Vec::new();
 	ser::serialize_default(&mut vec, &b).expect("serialization failed");
-	assert_eq!(vec.len(), 2_669);
+	assert_eq!(vec.len(), 2_669 + 8);
 }
 
 #[test]
@@ -500,7 +500,7 @@ fn empty_compact_block_serialized_size() {
 	let cb: CompactBlock = b.into();
 	let mut vec = Vec::new();
 	ser::serialize_default(&mut vec, &cb).expect("serialization failed");
-	assert_eq!(vec.len(), 1_104);
+	assert_eq!(vec.len(), 1_104 + 8);
 }
 
 #[test]
@@ -515,7 +515,7 @@ fn compact_block_single_tx_serialized_size() {
 	let cb: CompactBlock = b.into();
 	let mut vec = Vec::new();
 	ser::serialize_default(&mut vec, &cb).expect("serialization failed");
-	assert_eq!(vec.len(), 1_110);
+	assert_eq!(vec.len(), 1_110 + 8);
 }
 
 #[test]
@@ -536,7 +536,7 @@ fn block_10_tx_serialized_size() {
 	{
 		let mut vec = Vec::new();
 		ser::serialize_default(&mut vec, &b).expect("serialization failed");
-		assert_eq!(vec.len(), 16_826);
+		assert_eq!(vec.len(), 16_826 + 8);
 	}
 }
 
@@ -557,7 +557,7 @@ fn compact_block_10_tx_serialized_size() {
 	let cb: CompactBlock = b.into();
 	let mut vec = Vec::new();
 	ser::serialize_default(&mut vec, &cb).expect("serialization failed");
-	assert_eq!(vec.len(), 1_164);
+	assert_eq!(vec.len(), 1_164 + 8);
 }
 
 #[test]

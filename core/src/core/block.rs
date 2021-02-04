@@ -225,6 +225,8 @@ pub struct BlockHeader {
 	pub output_mmr_size: u64,
 	/// Total size of the kernel MMR after applying this block
 	pub kernel_mmr_size: u64,
+	/// Cumulative overage from claimed btc up to this and including block
+	pub cumulative_btc_overage: i64,
 	/// Proof of work and related
 	pub pow: ProofOfWork,
 }
@@ -244,6 +246,7 @@ impl Default for BlockHeader {
 			total_kernel_offset: BlindingFactor::zero(),
 			output_mmr_size: 0,
 			kernel_mmr_size: 0,
+			cumulative_btc_overage: 0,
 			pow: ProofOfWork::default(),
 		}
 	}
@@ -290,6 +293,7 @@ fn read_block_header<R: Reader>(reader: &mut R) -> Result<BlockHeader, ser::Erro
 	let kernel_root = Hash::read(reader)?;
 	let total_kernel_offset = BlindingFactor::read(reader)?;
 	let (output_mmr_size, kernel_mmr_size) = ser_multiread!(reader, read_u64, read_u64);
+	let cumulative_btc_overage = i64::read(reader)?;
 	let pow = ProofOfWork::read(reader)?;
 
 	if timestamp > MAX_DATE.and_hms(0, 0, 0).timestamp()
@@ -310,6 +314,7 @@ fn read_block_header<R: Reader>(reader: &mut R) -> Result<BlockHeader, ser::Erro
 		total_kernel_offset,
 		output_mmr_size,
 		kernel_mmr_size,
+		cumulative_btc_overage,
 		pow,
 	})
 }
@@ -336,7 +341,8 @@ impl BlockHeader {
 			[write_fixed_bytes, &self.kernel_root],
 			[write_fixed_bytes, &self.total_kernel_offset],
 			[write_u64, self.output_mmr_size],
-			[write_u64, self.kernel_mmr_size]
+			[write_u64, self.kernel_mmr_size],
+			[write_i64, self.cumulative_btc_overage]
 		);
 		Ok(())
 	}
@@ -650,6 +656,29 @@ impl Block {
 		let now = Utc::now().timestamp();
 		let timestamp = DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(now, 0), Utc);
 
+		let mut cumulative_btc_overage = prev.cumulative_btc_overage;
+
+		for tx in txs {
+			for kernel in tx.kernels() {
+				match kernel.features {
+					KernelFeatures::BitcoinInit {
+						fee: _,
+						index: _,
+						amount,
+						..
+					} => {
+						cumulative_btc_overage -= amount as i64;
+					}
+					_ => {}
+				}
+			}
+		}
+
+		error!(
+			"cumulative_btc_overage for height = {} is {}",
+			height, cumulative_btc_overage
+		);
+
 		// Now build the block with all the above information.
 		// Note: We have not validated the block here.
 		// Caller must validate the block as necessary.
@@ -664,6 +693,7 @@ impl Block {
 					total_difficulty: difficulty + prev.pow.total_difficulty,
 					..Default::default()
 				},
+				cumulative_btc_overage,
 				..Default::default()
 			},
 			body: agg_tx.into(),

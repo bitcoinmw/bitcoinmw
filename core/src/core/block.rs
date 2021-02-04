@@ -226,7 +226,7 @@ pub struct BlockHeader {
 	/// Total size of the kernel MMR after applying this block
 	pub kernel_mmr_size: u64,
 	/// Cumulative overage from claimed btc up to this and including block
-	pub cumulative_btc_overage: i64,
+	pub cumulative_btc_overage: u64,
 	/// Proof of work and related
 	pub pow: ProofOfWork,
 }
@@ -293,7 +293,7 @@ fn read_block_header<R: Reader>(reader: &mut R) -> Result<BlockHeader, ser::Erro
 	let kernel_root = Hash::read(reader)?;
 	let total_kernel_offset = BlindingFactor::read(reader)?;
 	let (output_mmr_size, kernel_mmr_size) = ser_multiread!(reader, read_u64, read_u64);
-	let cumulative_btc_overage = i64::read(reader)?;
+	let cumulative_btc_overage = u64::read(reader)?;
 	let pow = ProofOfWork::read(reader)?;
 
 	if timestamp > MAX_DATE.and_hms(0, 0, 0).timestamp()
@@ -342,7 +342,7 @@ impl BlockHeader {
 			[write_fixed_bytes, &self.total_kernel_offset],
 			[write_u64, self.output_mmr_size],
 			[write_u64, self.kernel_mmr_size],
-			[write_i64, self.cumulative_btc_overage]
+			[write_u64, self.cumulative_btc_overage]
 		);
 		Ok(())
 	}
@@ -414,6 +414,9 @@ impl BlockHeader {
 		(calc_block_overage(self.height) as i64)
 			.checked_neg()
 			.unwrap_or(0)
+			+ (self.cumulative_btc_overage as i64)
+				.checked_neg()
+				.unwrap_or(0)
 	}
 
 	/// Total kernel offset for the chain state up to and including this block.
@@ -667,7 +670,7 @@ impl Block {
 						amount,
 						..
 					} => {
-						cumulative_btc_overage -= amount as i64;
+						cumulative_btc_overage += amount;
 					}
 					_ => {}
 				}

@@ -24,6 +24,7 @@ use crate::web::*;
 use bitcoinmw_loader::loader::UtxoData;
 use failure::ResultExt;
 use hyper::{Body, Request, StatusCode};
+use std::convert::TryInto;
 use std::sync::Weak;
 
 /// Chain handler. Get the head details.
@@ -49,10 +50,13 @@ impl ChainHandler {
 		let mut sats = 0;
 		let mut index = 0;
 		if val.is_some() {
-			unclaimed = true;
 			let tuple = *val.unwrap();
 			sats = tuple.0;
 			index = tuple.1;
+
+			let mut bitvecs = wval.claims_bitmaps.lock().unwrap();
+			let bitvec = bitvecs.get_mut("head").unwrap();
+			unclaimed = !*bitvec.get(index.try_into().unwrap_or(0)).unwrap();
 		}
 
 		Ok(AddressStatus {

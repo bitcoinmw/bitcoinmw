@@ -671,6 +671,7 @@ impl Chain {
 
 	/// Validate the tx against the current UTXO set and recent kernels (NRD relative lock heights).
 	pub fn validate_tx(&self, tx: &Transaction) -> Result<(), Error> {
+		self.validate_tx_against_btc_utxo(tx)?;
 		self.validate_tx_against_utxo(tx)?;
 		self.validate_tx_kernels(tx)?;
 		Ok(())
@@ -694,6 +695,35 @@ impl Chain {
 			let height = self.next_block_height()?;
 			ext.extension.apply_kernels(tx.kernels(), height, batch)
 		})
+	}
+
+	fn validate_tx_against_btc_utxo(&self, tx: &Transaction) -> Result<(), Error> {
+		if self.utxo_data.is_none() {
+			return Ok(());
+		}
+		let utxo_data = self.utxo_data.as_ref().unwrap();
+		let utxo_data = utxo_data.upgrade().unwrap();
+
+		// we use a mutex because there are two threads that can access this and we write
+		let mut bitvecs = utxo_data.claims_bitmaps.lock().unwrap();
+
+		let bitvec = bitvecs.get_mut("head").unwrap();
+
+		for kernel in tx.kernels() {
+			match kernel.features {
+				KernelFeatures::BitcoinInit { index, .. } => {
+					if *bitvec.get(index.try_into().unwrap_or(0)).unwrap() {
+						return Err(ErrorKind::BTCAddressAlreadyClaimed(format!(
+							"{:?}",
+							utxo_data.map.get(&index)
+						))
+						.into());
+					}
+				}
+				_ => {}
+			}
+		}
+		Ok(())
 	}
 
 	fn validate_tx_against_utxo(

@@ -63,6 +63,9 @@ pub enum ErrorKind {
 	/// The block doesn't sum correctly or a tx signature is invalid
 	#[fail(display = "Invalid Block Proof")]
 	InvalidBlockProof(block::Error),
+	/// BTC Address has already been Claimed.
+	#[fail(display = "BTC Address Already Claimed: {}", _0)]
+	BTCAddressAlreadyClaimed(String),
 	/// Block time is too old
 	#[fail(display = "Invalid Block Time")]
 	InvalidBlockTime,

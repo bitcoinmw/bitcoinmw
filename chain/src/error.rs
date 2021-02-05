@@ -48,6 +48,9 @@ pub enum ErrorKind {
 	/// Block header edge_bits is lower than our min
 	#[fail(display = "Cuckoo Size too small")]
 	LowEdgebits,
+	/// Weak upgrade failed
+	#[fail(display = "Weak upgrade of utxo failed")]
+	WeakUpgradeFailed,
 	/// Scaling factor between primary and secondary PoW is invalid
 	#[fail(display = "Wrong scaling factor")]
 	InvalidScaling,

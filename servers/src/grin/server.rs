@@ -198,6 +198,19 @@ impl Server {
 
 		info!("Starting server, genesis block: {}", genesis.hash());
 
+		// load bitcoin utxo binary
+		let binary_location = config
+			.binary_location
+			.clone()
+			.unwrap_or("/opt/gen_bin.bin".to_string());
+		let res = loader::load_binary(&binary_location);
+		if res.is_err() {
+			error!("Could not load binary: {:?}", res);
+			println!("Could not load binary: {:?}", res);
+			exit(0);
+		}
+		let _utxo_data = Arc::new(res.unwrap());
+
 		let shared_chain = Arc::new(chain::Chain::init(
 			config.db_root.clone(),
 			chain_adapter.clone(),
@@ -205,6 +218,7 @@ impl Server {
 			pow::verify_size,
 			verifier_cache.clone(),
 			archive_mode,
+			Arc::downgrade(&_utxo_data),
 		)?);
 
 		pool_adapter.set_chain(shared_chain.clone());
@@ -307,19 +321,6 @@ impl Server {
 				Some(TLSConfig::new(file, key))
 			}
 		};
-
-		// load bitcoin utxo binary
-		let binary_location = config
-			.binary_location
-			.clone()
-			.unwrap_or("/opt/gen_bin.bin".to_string());
-		let res = loader::load_binary(&binary_location);
-		if res.is_err() {
-			error!("Could not load binary: {:?}", res);
-			println!("Could not load binary: {:?}", res);
-			exit(0);
-		}
-		let _utxo_data = Arc::new(res.unwrap());
 
 		// TODO fix API shutdown and join this thread
 		api::node_apis(

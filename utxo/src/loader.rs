@@ -17,6 +17,8 @@ use std::fs::File;
 use std::io::Cursor;
 use std::io::Read;
 use std::path::Path;
+use std::sync::Arc;
+use std::sync::Mutex;
 
 const FLAG_LEGACY_ADDRESS: u64 = 0x800000000000;
 const FLAG_P2SH_ADDRESS: u64 = 0x400000000000;
@@ -112,7 +114,7 @@ pub struct AddressInfo {
 pub struct UtxoData {
 	pub map: HashMap<u32, AddressInfo>,
 	pub addr_map: HashMap<String, u64>,
-	pub claims_bitmap: BitVec,
+	pub claims_bitmaps: Arc<Mutex<HashMap<String, BitVec>>>,
 }
 
 pub fn load_binary(binary: &str) -> Result<UtxoData, Error> {
@@ -191,11 +193,14 @@ pub fn load_binary(binary: &str) -> Result<UtxoData, Error> {
 
 	let mut claims_bitmap: BitVec = BitVec::new();
 	claims_bitmap.resize(map.len(), false);
+	let mut claims_bitmaps: HashMap<String, BitVec> = HashMap::new();
+	claims_bitmaps.insert("head".to_string(), claims_bitmap);
+	let claims_bitmaps = Arc::new(Mutex::new(claims_bitmaps));
 
 	let ret = UtxoData {
 		map,
 		addr_map,
-		claims_bitmap,
+		claims_bitmaps,
 	};
 	Ok(ret)
 }

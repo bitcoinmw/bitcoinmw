@@ -36,12 +36,15 @@ use crate::types::{
 use crate::util::secp::pedersen::{Commitment, RangeProof};
 use crate::util::RwLock;
 use crate::ChainStore;
+use bitcoinmw_loader::loader::UtxoData;
 use grin_core::ser;
 use grin_store::Error::NotFoundErr;
+use std::convert::TryInto;
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::Weak;
 use std::time::{Duration, Instant};
 use std::{collections::HashMap, io::Cursor};
 
@@ -158,6 +161,7 @@ pub struct Chain {
 	pow_verifier: fn(&BlockHeader) -> Result<(), pow::Error>,
 	archive_mode: bool,
 	genesis: BlockHeader,
+	utxo_data: Weak<UtxoData>,
 }
 
 impl Chain {
@@ -171,6 +175,7 @@ impl Chain {
 		pow_verifier: fn(&BlockHeader) -> Result<(), pow::Error>,
 		verifier_cache: Arc<RwLock<dyn VerifierCache>>,
 		archive_mode: bool,
+		utxo_data: Weak<UtxoData>,
 	) -> Result<Chain, Error> {
 		let store = Arc::new(store::ChainStore::new(&db_root)?);
 
@@ -224,6 +229,7 @@ impl Chain {
 			verifier_cache,
 			archive_mode,
 			genesis: genesis.header,
+			utxo_data,
 		};
 
 		chain.log_heads()?;
@@ -453,6 +459,8 @@ impl Chain {
 					Tip::from_header(&fork_point),
 				);
 
+				self.check_btc_utxo_claims(b.clone(), status, head, fork_point, prev_head)?;
+
 				// notifying other parts of the system of the update
 				self.adapter.block_accepted(&b, status, opts);
 
@@ -479,6 +487,47 @@ impl Chain {
 				}
 			},
 		}
+	}
+
+	fn check_btc_utxo_claims(
+		&self,
+		block: Block,
+		status: BlockStatus,
+		head: Option<Tip>,
+		fork_point: BlockHeader,
+		prev_head: Tip,
+	) -> Result<(), Error> {
+		// unwrap safe because refence kept in object that lives throughout life of server
+		let utxo_data = self.utxo_data.upgrade().unwrap();
+
+		// we use a mutex because there are two threads that can access this and we write
+		let mut bitvecs = utxo_data.claims_bitmaps.lock().unwrap();
+
+		match status {
+			BlockStatus::Next { .. } => {
+				// standard case, no reorg/fork.
+
+				let bitvec = bitvecs.get_mut("head").unwrap();
+				for kernel in block.body.kernels {
+					match kernel.features {
+						KernelFeatures::BitcoinInit { index, .. } => {
+							if *bitvec.get(index.try_into().unwrap_or(0)).unwrap() {
+								return Err(ErrorKind::Unfit(format!(
+									"BTC address [{:?}] has already been claimed",
+									utxo_data.map.get(&index)
+								))
+								.into());
+							}
+							bitvec.insert(index.try_into().unwrap_or(0), true);
+						}
+						_ => {}
+					}
+				}
+			}
+			BlockStatus::Reorg { .. } => {}
+			BlockStatus::Fork { .. } => {}
+		}
+		Ok(())
 	}
 
 	/// Process a block header received during "header first" propagation.

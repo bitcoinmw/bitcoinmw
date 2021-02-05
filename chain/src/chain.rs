@@ -292,7 +292,7 @@ impl Chain {
 				for kernel in kernels.clone() {
 					match kernel.features {
 						KernelFeatures::BitcoinInit { index, .. } => {
-							bitvec.insert(index.try_into().unwrap_or(0), true);
+							bitvec.insert(index.try_into().unwrap_or(0) - 1, true);
 						}
 						_ => {}
 					}
@@ -547,14 +547,14 @@ impl Chain {
 				for kernel in block.body.kernels {
 					match kernel.features {
 						KernelFeatures::BitcoinInit { index, .. } => {
-							if *bitvec.get(index.try_into().unwrap_or(0)).unwrap() {
+							if *bitvec.get(index.try_into().unwrap_or(0) - 1).unwrap() {
 								return Err(ErrorKind::Unfit(format!(
 									"BTC address [{:?}] has already been claimed",
 									utxo_data.map.get(&index)
 								))
 								.into());
 							}
-							bitvec.insert(index.try_into().unwrap_or(0), true);
+							bitvec.insert(index.try_into().unwrap_or(0) - 1, true);
 						}
 						_ => {}
 					}

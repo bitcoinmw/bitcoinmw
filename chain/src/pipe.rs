@@ -147,6 +147,9 @@ pub fn process_block(
 		// We know there are no double-spends etc. if this verifies successfully.
 		verify_block_sums(b, batch)?;
 
+		// Validate the block against BTC CLaim UTXOs.
+		// Make sure no duplicates
+		// TODO: Handle forks and reorgs
 		validate_btc_utxos(b, utxo_data)?;
 
 		// Apply the block to the txhashset state.
@@ -171,6 +174,10 @@ pub fn process_block(
 	// as we only commit the child batch if the extension increases total work.
 	// We want to save the block to the db regardless.
 	add_block(b, &ctx.batch)?;
+
+	// Now that the block has been officially added, we update bitvecs with btc claims
+	// TODO: must be done on appropriate fork, for now just one
+	update_btc_utxo_bitvec(b, utxo_data)?;
 
 	// If we have no "tail" then set it now.
 	if ctx.batch.tail().is_err() {
@@ -619,6 +626,29 @@ pub fn rewind_and_apply_fork(
 	}
 
 	Ok(fork_point)
+}
+
+fn update_btc_utxo_bitvec(b: &Block, utxo_data: Option<&Weak<UtxoData>>) -> Result<(), Error> {
+	if utxo_data.is_none() {
+		return Ok(());
+	}
+
+	let utxo_data = &*utxo_data.unwrap();
+	let utxo_data = utxo_data.upgrade().unwrap();
+
+	// we use a mutex because there are two threads that can access this and we write
+	let mut bitvecs = utxo_data.claims_bitmaps.lock().unwrap();
+	let bitvec = bitvecs.get_mut("head").unwrap();
+	for kernel in &b.body.kernels {
+		match kernel.features {
+			KernelFeatures::BitcoinInit { index, .. } => {
+				(*bitvec).insert(index.try_into().unwrap_or(0), true);
+			}
+			_ => {}
+		}
+	}
+
+	Ok(())
 }
 
 fn validate_btc_utxos(b: &Block, utxo_data: Option<&Weak<UtxoData>>) -> Result<(), Error> {

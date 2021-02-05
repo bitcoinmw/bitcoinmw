@@ -176,7 +176,7 @@ fn process_block_cut_through() -> Result<(), chain::Error> {
 		let batch = store.batch()?;
 
 		let mut ctx = chain.new_ctx(Options::NONE, batch, &mut header_pmmr, &mut txhashset)?;
-		let res = pipe::process_block(&block, &mut ctx).map_err(|e| e.kind());
+		let res = pipe::process_block(&block, &mut ctx, None).map_err(|e| e.kind());
 		assert_eq!(
 			res,
 			Err(chain::ErrorKind::InvalidBlockProof(

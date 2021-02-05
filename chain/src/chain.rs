@@ -283,7 +283,7 @@ impl Chain {
 
 		let txhashset = self.txhashset.read();
 
-		txhashset::rewindable_kernel_view(&txhashset, |view, batch| {
+		txhashset::rewindable_kernel_view(&txhashset, |view, _| {
 			let mut index = 0;
 			loop {
 				let (next, kernels) = view
@@ -475,7 +475,7 @@ impl Chain {
 			let prev_head = batch.head()?;
 			let mut ctx = self.new_ctx(opts, batch, &mut header_pmmr, &mut txhashset)?;
 
-			let maybe_new_head = pipe::process_block(&b, &mut ctx);
+			let maybe_new_head = pipe::process_block(&b, &mut ctx, self.utxo_data.as_ref());
 
 			// We have flushed txhashset extension changes to disk
 			// but not yet committed the batch.
@@ -498,8 +498,6 @@ impl Chain {
 					prev_head,
 					Tip::from_header(&fork_point),
 				);
-
-				self.check_btc_utxo_claims(b.clone(), status, head, fork_point, prev_head)?;
 
 				// notifying other parts of the system of the update
 				self.adapter.block_accepted(&b, status, opts);
@@ -527,51 +525,6 @@ impl Chain {
 				}
 			},
 		}
-	}
-
-	fn check_btc_utxo_claims(
-		&self,
-		block: Block,
-		status: BlockStatus,
-		head: Option<Tip>,
-		fork_point: BlockHeader,
-		prev_head: Tip,
-	) -> Result<(), Error> {
-		if self.utxo_data.is_none() {
-			return Ok(());
-		}
-		let utxo_data = self.utxo_data.as_ref().unwrap();
-		// unwrap safe because refence kept in object that lives throughout life of server
-		let utxo_data = utxo_data.upgrade().unwrap();
-
-		// we use a mutex because there are two threads that can access this and we write
-		let mut bitvecs = utxo_data.claims_bitmaps.lock().unwrap();
-
-		match status {
-			BlockStatus::Next { .. } => {
-				// standard case, no reorg/fork.
-
-				let bitvec = bitvecs.get_mut("head").unwrap();
-				for kernel in block.body.kernels {
-					match kernel.features {
-						KernelFeatures::BitcoinInit { index, .. } => {
-							if *bitvec.get(index.try_into().unwrap_or(0)).unwrap() {
-								return Err(ErrorKind::Unfit(format!(
-									"BTC address [{:?}] has already been claimed",
-									utxo_data.map.get(&index)
-								))
-								.into());
-							}
-							bitvec.insert(index.try_into().unwrap_or(0), true);
-						}
-						_ => {}
-					}
-				}
-			}
-			BlockStatus::Reorg { .. } => {}
-			BlockStatus::Fork { .. } => {}
-		}
-		Ok(())
 	}
 
 	/// Process a block header received during "header first" propagation.

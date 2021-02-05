@@ -28,7 +28,11 @@ use crate::store;
 use crate::txhashset;
 use crate::types::{CommitPos, Options, Tip};
 use crate::util::RwLock;
-use std::sync::Arc;
+use bitcoinmw_loader::loader::UtxoData;
+use grin_core::core::KernelFeatures;
+use std::collections::HashMap;
+use std::convert::TryInto;
+use std::sync::{Arc, Weak};
 
 /// Contextual information required to process a new block and either reject or
 /// accept it.
@@ -84,6 +88,7 @@ fn validate_pow_only(header: &BlockHeader, ctx: &mut BlockContext<'_>) -> Result
 pub fn process_block(
 	b: &Block,
 	ctx: &mut BlockContext<'_>,
+	utxo_data: Option<&Weak<UtxoData>>,
 ) -> Result<(Option<Tip>, BlockHeader), Error> {
 	debug!(
 		"pipe: process_block {} at {} [in/out/kern: {}/{}/{}] ({})",
@@ -141,6 +146,8 @@ pub fn process_block(
 		// accounting for inputs/outputs/kernels in this new block.
 		// We know there are no double-spends etc. if this verifies successfully.
 		verify_block_sums(b, batch)?;
+
+		validate_btc_utxos(b, utxo_data)?;
 
 		// Apply the block to the txhashset state.
 		// Validate the txhashset roots and sizes against the block header.
@@ -612,6 +619,45 @@ pub fn rewind_and_apply_fork(
 	}
 
 	Ok(fork_point)
+}
+
+fn validate_btc_utxos(b: &Block, utxo_data: Option<&Weak<UtxoData>>) -> Result<(), Error> {
+	if utxo_data.is_none() {
+		return Ok(());
+	}
+
+	let utxo_data = &*utxo_data.unwrap();
+	let utxo_data = utxo_data.upgrade().unwrap();
+
+	// we use a mutex because there are two threads that can access this and we write
+	let mut bitvecs = utxo_data.claims_bitmaps.lock().unwrap();
+	let bitvec = bitvecs.get_mut("head").unwrap();
+	let mut index_map: HashMap<u32, bool> = HashMap::new();
+	for kernel in &b.body.kernels {
+		match kernel.features {
+			KernelFeatures::BitcoinInit { index, .. } => {
+				if *bitvec.get(index.try_into().unwrap_or(0)).unwrap() {
+					return Err(ErrorKind::Unfit(format!(
+						"BTC address [{:?}] has already been claimed",
+						utxo_data.map.get(&index)
+					))
+					.into());
+				}
+
+				if index_map.get(&index).is_some() {
+					return Err(ErrorKind::Unfit(format!(
+						"BTC address [{:?}] found twice in this block",
+						utxo_data.map.get(&index)
+					))
+					.into());
+				}
+				index_map.insert(index, true);
+			}
+			_ => {}
+		}
+	}
+
+	Ok(())
 }
 
 /// Validate block inputs and outputs against utxo.

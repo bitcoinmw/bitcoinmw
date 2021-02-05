@@ -232,6 +232,7 @@ impl Chain {
 			utxo_data,
 		};
 
+		chain.init_utxo_data()?;
 		chain.log_heads()?;
 
 		// Temporarily exercising the initialization process.
@@ -266,6 +267,41 @@ impl Chain {
 	/// Shared store instance.
 	pub fn store(&self) -> Arc<store::ChainStore> {
 		self.store.clone()
+	}
+
+	fn init_utxo_data(&self) -> Result<(), Error> {
+		let utxo_data = self.utxo_data.upgrade().unwrap();
+
+		// we use a mutex because there are two threads that can access this and we write
+		let mut bitvecs = utxo_data.claims_bitmaps.lock().unwrap();
+
+		let bitvec = bitvecs.get_mut("head").unwrap();
+
+		let txhashset = self.txhashset.read();
+
+		txhashset::rewindable_kernel_view(&txhashset, |view, batch| {
+			let mut index = 0;
+			loop {
+				let (next, kernels) = view
+					.readonly_pmmr()
+					.elements_from_pmmr_index(index, 100, None);
+				index = next;
+				if kernels.len() == 0 {
+					break;
+				}
+				for kernel in kernels.clone() {
+					match kernel.features {
+						KernelFeatures::BitcoinInit { index, .. } => {
+							bitvec.insert(index.try_into().unwrap_or(0), true);
+						}
+						_ => {}
+					}
+				}
+			}
+			Ok(())
+		})?;
+
+		Ok(())
 	}
 
 	fn log_heads(&self) -> Result<(), Error> {

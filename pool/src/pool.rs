@@ -20,7 +20,8 @@ use self::core::core::id::{ShortId, ShortIdentifiable};
 use self::core::core::transaction;
 use self::core::core::verifier_cache::VerifierCache;
 use self::core::core::{
-	Block, BlockHeader, BlockSums, Committed, OutputIdentifier, Transaction, TxKernel, Weighting,
+	Block, BlockHeader, BlockSums, Committed, KernelFeatures, OutputIdentifier, Transaction,
+	TxKernel, Weighting,
 };
 use self::util::RwLock;
 use crate::types::{BlockChain, PoolEntry, PoolError};
@@ -271,7 +272,25 @@ where
 			}
 		}
 
-		Ok(valid_txs)
+		// we must ensure no duplicate BTC indices are in the pool.
+		let mut ret_txs = vec![];
+		let mut map: HashMap<u32, bool> = HashMap::new();
+		for tx in valid_txs {
+			for kernel in tx.kernels() {
+				match kernel.features {
+					KernelFeatures::BitcoinInit { index, .. } => {
+						if map.get(&index).is_some() {
+							continue;
+						}
+						map.insert(index, true);
+					}
+					_ => {}
+				}
+			}
+			ret_txs.push(tx.clone());
+		}
+
+		Ok(ret_txs)
 	}
 
 	/// Lookup unspent outputs to be spent by the provided transaction.

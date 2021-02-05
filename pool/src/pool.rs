@@ -276,18 +276,21 @@ where
 		let mut ret_txs = vec![];
 		let mut map: HashMap<u32, bool> = HashMap::new();
 		for tx in valid_txs {
+			let mut dupe = false;
 			for kernel in tx.kernels() {
 				match kernel.features {
 					KernelFeatures::BitcoinInit { index, .. } => {
 						if map.get(&index).is_some() {
-							continue;
+							dupe = true;
 						}
 						map.insert(index, true);
 					}
 					_ => {}
 				}
 			}
-			ret_txs.push(tx.clone());
+			if !dupe {
+				ret_txs.push(tx.clone());
+			}
 		}
 
 		Ok(ret_txs)

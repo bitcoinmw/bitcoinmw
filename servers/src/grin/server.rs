@@ -218,7 +218,7 @@ impl Server {
 			pow::verify_size,
 			verifier_cache.clone(),
 			archive_mode,
-			Arc::downgrade(&_utxo_data),
+			Some(Arc::downgrade(&_utxo_data)),
 		)?);
 
 		pool_adapter.set_chain(shared_chain.clone());

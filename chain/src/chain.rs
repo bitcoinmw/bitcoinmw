@@ -161,7 +161,7 @@ pub struct Chain {
 	pow_verifier: fn(&BlockHeader) -> Result<(), pow::Error>,
 	archive_mode: bool,
 	genesis: BlockHeader,
-	utxo_data: Weak<UtxoData>,
+	utxo_data: Option<Weak<UtxoData>>,
 }
 
 impl Chain {
@@ -175,7 +175,7 @@ impl Chain {
 		pow_verifier: fn(&BlockHeader) -> Result<(), pow::Error>,
 		verifier_cache: Arc<RwLock<dyn VerifierCache>>,
 		archive_mode: bool,
-		utxo_data: Weak<UtxoData>,
+		utxo_data: Option<Weak<UtxoData>>,
 	) -> Result<Chain, Error> {
 		let store = Arc::new(store::ChainStore::new(&db_root)?);
 
@@ -270,7 +270,11 @@ impl Chain {
 	}
 
 	fn init_utxo_data(&self) -> Result<(), Error> {
-		let utxo_data = self.utxo_data.upgrade().unwrap();
+		if self.utxo_data.is_none() {
+			return Ok(());
+		}
+		let utxo_data = self.utxo_data.as_ref().unwrap();
+		let utxo_data = utxo_data.upgrade().unwrap();
 
 		// we use a mutex because there are two threads that can access this and we write
 		let mut bitvecs = utxo_data.claims_bitmaps.lock().unwrap();
@@ -533,8 +537,12 @@ impl Chain {
 		fork_point: BlockHeader,
 		prev_head: Tip,
 	) -> Result<(), Error> {
+		if self.utxo_data.is_none() {
+			return Ok(());
+		}
+		let utxo_data = self.utxo_data.as_ref().unwrap();
 		// unwrap safe because refence kept in object that lives throughout life of server
-		let utxo_data = self.utxo_data.upgrade().unwrap();
+		let utxo_data = utxo_data.upgrade().unwrap();
 
 		// we use a mutex because there are two threads that can access this and we write
 		let mut bitvecs = utxo_data.claims_bitmaps.lock().unwrap();

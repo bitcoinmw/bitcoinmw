@@ -57,6 +57,7 @@ pub fn init_chain(dir_name: &str, genesis: Block) -> Chain {
 		pow::verify_size,
 		verifier_cache,
 		false,
+		None,
 	)
 	.unwrap()
 }

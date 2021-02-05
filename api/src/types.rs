@@ -52,6 +52,8 @@ pub struct AddressStatus {
 	pub unclaimed: bool,
 	// Amount if it's claimable, if not this is 0.
 	pub sats: u64,
+	// Index for this address
+	pub index: u32,
 }
 
 /// The state of the current fork tip

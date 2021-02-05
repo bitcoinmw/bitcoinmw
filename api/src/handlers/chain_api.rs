@@ -47,15 +47,19 @@ impl ChainHandler {
 		let valid = val.is_some();
 		let mut unclaimed = false; // unclaimed will be false if it's not valid
 		let mut sats = 0;
+		let mut index = 0;
 		if val.is_some() {
 			unclaimed = true;
-			sats = *val.unwrap();
+			let tuple = *val.unwrap();
+			sats = tuple.0;
+			index = tuple.1;
 		}
 
 		Ok(AddressStatus {
 			valid,
 			unclaimed,
 			sats,
+			index,
 		})
 	}
 }

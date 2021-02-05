@@ -113,7 +113,7 @@ pub struct AddressInfo {
 #[derive(Debug)]
 pub struct UtxoData {
 	pub map: HashMap<u32, AddressInfo>,
-	pub addr_map: HashMap<String, u64>,
+	pub addr_map: HashMap<String, (u64, u32)>,
 	pub claims_bitmaps: Arc<Mutex<HashMap<String, BitVec>>>,
 }
 
@@ -186,9 +186,9 @@ pub fn load_binary(binary: &str) -> Result<UtxoData, Error> {
 	}
 
 	// map of address to claim status
-	let mut addr_map: HashMap<String, u64> = HashMap::new();
-	for (_, value) in &map {
-		addr_map.insert(value.address.clone(), value.sats);
+	let mut addr_map: HashMap<String, (u64, u32)> = HashMap::new();
+	for (key, value) in &map {
+		addr_map.insert(value.address.clone(), (value.sats, *key));
 	}
 
 	let mut claims_bitmap: BitVec = BitVec::new();

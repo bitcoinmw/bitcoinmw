@@ -693,11 +693,6 @@ impl Block {
 			}
 		}
 
-		error!(
-			"cumulative_btc_overage for height = {} is {}",
-			height, cumulative_btc_overage
-		);
-
 		// Now build the block with all the above information.
 		// Note: We have not validated the block here.
 		// Caller must validate the block as necessary.

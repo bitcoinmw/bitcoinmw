@@ -190,6 +190,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "bitcoin"
+version = "0.26.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1ec5f88a446d66e7474a3b8fa2e348320b574463fb78d799d90ba68f79f48e0e"
+dependencies = [
+ "bech32",
+ "bitcoin_hashes",
+ "secp256k1",
+]
+
+[[package]]
 name = "bitcoin_hashes"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1039,6 +1050,8 @@ name = "grin_chain"
 version = "5.1.0-alpha.1"
 dependencies = [
  "bit-vec",
+ "bitcoin 0.26.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "bitcoin_hashes",
  "bitcoinmw_loader",
  "bitflags 1.2.1",
  "byteorder",
@@ -1080,7 +1093,7 @@ dependencies = [
 name = "grin_core"
 version = "5.1.0-alpha.1"
 dependencies = [
- "bitcoin",
+ "bitcoin 0.26.0 (git+https://github.com/bitcoinmw/rust-bitcoin)",
  "blake2-rfc",
  "byteorder",
  "bytes",

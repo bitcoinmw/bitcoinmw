@@ -106,8 +106,8 @@ pub fn encode(hrp: &str, data: Vec<u5>) -> Result<String, Error> {
 
 #[derive(Debug)]
 pub struct AddressInfo {
-	address: String,
-	sats: u64,
+	pub address: String,
+	pub sats: u64,
 }
 
 #[derive(Debug)]

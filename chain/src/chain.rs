@@ -36,7 +36,14 @@ use crate::types::{
 use crate::util::secp::pedersen::{Commitment, RangeProof};
 use crate::util::RwLock;
 use crate::ChainStore;
+
+use bitcoin::secp256k1::{Message, Secp256k1};
+use bitcoin::util::key::PublicKey as BitcoinPublicKey;
+use bitcoin::util::misc;
+use bitcoin::Address;
+
 use bitcoinmw_loader::loader::UtxoData;
+use grin_core::core::get_recoverable_signature;
 use grin_core::ser;
 use grin_store::Error::NotFoundErr;
 use std::convert::TryInto;
@@ -682,7 +689,9 @@ impl Chain {
 	/// The extension and the db batch are discarded.
 	/// The batch ensures duplicate NRD kernels within the tx are handled correctly.
 	fn validate_tx_kernels(&self, tx: &Transaction) -> Result<(), Error> {
-		let has_nrd_kernel = tx.kernels().iter().any(|k| match k.features {
+		let kernels = tx.kernels();
+		self.validate_btc_kernels(kernels)?;
+		let has_nrd_kernel = kernels.iter().any(|k| match k.features {
 			KernelFeatures::NoRecentDuplicate { .. } => true,
 			_ => false,
 		});
@@ -695,6 +704,58 @@ impl Chain {
 			let height = self.next_block_height()?;
 			ext.extension.apply_kernels(tx.kernels(), height, batch)
 		})
+	}
+
+	/// Validate the BTC signatures in the kernels in this TX.
+	fn validate_btc_kernels(&self, kernels: &[TxKernel]) -> Result<(), Error> {
+		if self.utxo_data.is_none() {
+			return Ok(());
+		}
+		let utxo_data = self.utxo_data.as_ref().unwrap();
+		let utxo_data = utxo_data.upgrade().unwrap();
+
+		let secp = Secp256k1::verification_only();
+
+		for k in kernels {
+			match k.features {
+				KernelFeatures::BitcoinInit {
+					btc_recovery_bit,
+					index,
+					..
+				} => {
+					let rec_sig = get_recoverable_signature(k.features)
+						.map_err(|_| ErrorKind::InvalidBTCSignature)?;
+
+					let excess = format!("{:?}", k.excess);
+					let excess = excess.replace("Commitment(", "");
+					let excess = excess.replace(")", "");
+					let challenge_str = format!("bmw{}", excess);
+					let hash = misc::signed_msg_hash(&challenge_str);
+					let msg = Message::from_slice(&hash[..]).unwrap();
+					let pubkey = BitcoinPublicKey {
+						key: secp
+							.recover(&msg, &rec_sig)
+							.map_err(|_| ErrorKind::InvalidBTCSignature)?,
+						compressed: ((btc_recovery_bit - 27) & 4) != 0,
+					};
+					let address_rec =
+						Address::p2pkh(&pubkey, bitcoin::network::constants::Network::Bitcoin);
+					let address_rec = &format!("{}", address_rec);
+					let address = utxo_data.map.get(&index);
+					if !address.is_some() {
+						return Err(ErrorKind::InvalidBTCSignature.into());
+					}
+					let address = address.unwrap();
+					let address = &(&*address).address;
+					if address != address_rec {
+						return Err(ErrorKind::InvalidBTCSignature.into());
+					}
+				}
+				_ => {}
+			}
+		}
+
+		Ok(())
 	}
 
 	fn validate_tx_against_btc_utxo(&self, tx: &Transaction) -> Result<(), Error> {

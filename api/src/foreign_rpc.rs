@@ -359,7 +359,7 @@ pub trait ForeignRpc: Sync + Send {
 	) -> Result<LocatedTxKernel, ErrorKind>;
 
 	/**
-		Networked version of [Foreign::get_btc_address_status](struct.Foreign.html#method.get_btc_address_status).
+	Networked version of [Foreign::get_btc_address_status](struct.Foreign.html#method.get_btc_address_status).
 
 	# Json rpc example
 

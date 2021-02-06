@@ -380,6 +380,8 @@ pub trait ForeignRpc: Sync + Send {
 		"jsonrpc": "2.0",
 		"result": {
 			"Ok": {
+				"index": 0,
+				"sats": 0,
 				"unclaimed": false,
 				"valid": false
 			}

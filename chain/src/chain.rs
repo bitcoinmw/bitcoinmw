@@ -723,7 +723,7 @@ impl Chain {
 					index,
 					..
 				} => {
-					let rec_sig = get_recoverable_signature(k.features)
+					let rec_sig = get_recoverable_signature(k.features.clone())
 						.map_err(|_| ErrorKind::InvalidBTCSignature)?;
 
 					let excess = format!("{:?}", k.excess);

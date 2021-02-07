@@ -268,7 +268,7 @@ impl NRDRelativeHeight {
 }
 
 /// Various tx kernel variants.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize, Debug)]
 pub enum KernelFeatures {
 	/// Plain kernel (the default for Grin txs).
 	Plain {
@@ -712,7 +712,7 @@ impl From<committed::Error> for Error {
 /// amount to zero.
 /// The signature signs the fee_fields and the lock_height, which are retained for
 /// signature validation.
-#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct TxKernel {
 	/// Options for a kernel's structure or use
 	pub features: KernelFeatures,
@@ -1805,7 +1805,7 @@ pub fn deaggregate(mk_tx: Transaction, txs: &[Transaction]) -> Result<Transactio
 	}
 	for mk_kernel in mk_tx.kernels() {
 		if !tx.kernels().contains(&mk_kernel) && !kernels.contains(mk_kernel) {
-			kernels.push(*mk_kernel);
+			kernels.push(mk_kernel.clone());
 		}
 	}
 

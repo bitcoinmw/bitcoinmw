@@ -23,6 +23,7 @@ use bitcoin::util::address::Address;
 use serde_derive::{Deserialize, Serialize};
 use serde_json::Value::Null;
 use serde_json::{Error, Value};
+use std::fs::File;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::io::{BufRead, BufReader};
@@ -66,6 +67,8 @@ struct Cli {
 	append: bool,
 }
 
+const MAX_THREAD_COUNT: usize = 16;
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
 	let args = Cli::from_args();
 	let rpcuser = args.rpcuser;
@@ -80,7 +83,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 	let network = Network::Bitcoin;
 
-	let mut file;
+	let file;
 	if !append {
 		let _ = std::fs::remove_file(outfile.clone());
 		file = OpenOptions::new().write(true).create(true).open(outfile)?;
@@ -88,7 +91,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 		file = OpenOptions::new().write(true).append(true).open(outfile)?;
 	}
 
-	let mut errfile = OpenOptions::new()
+	let errfile = OpenOptions::new()
 		.write(true)
 		.create(true)
 		.append(true)
@@ -134,8 +137,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 			inner_cmd.wait()?;
 
 			let mut handles: Vec<JoinHandle<_>> = Vec::new();
-			let (tx, rx): (Sender<String>, Receiver<String>) = channel();
+			let mut senders: Vec<Sender<String>> = Vec::new();
+			let mut receivers: Vec<Receiver<String>> = Vec::new();
+			for _ in 0..MAX_THREAD_COUNT {
+				let (tx, rx): (Sender<String>, Receiver<String>) = channel();
+				senders.push(tx);
+				receivers.push(rx);
+			}
 
+			let mut counter = 0;
 			loop {
 				if arr[index] == Null {
 					break;
@@ -146,6 +156,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 				let rpcconnect = rpcconnect.clone();
 				let rpcport = rpcport.clone();
 				let arr = arr.clone();
+				let tx = &senders[counter];
 				let tx = tx.clone();
 
 				let next = thread::spawn(move || {
@@ -207,11 +218,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 								for address in addresses.as_array() {
 									for x in 0..address.len() {
 										let address = address[x].as_str().unwrap().to_string();
-										//write!(
-										//	file,
-										//	"add {} {} {} {}\n",
-										//	address, tx_id, n, value
-										//).unwrap();
 										tx.send(format!(
 											"add {} {} {} {}\n",
 											address, tx_id, n, value
@@ -236,22 +242,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 											let public_key = public_key.unwrap();
 											let address =
 												Address::p2pkh(&public_key, network).to_string();
-											//write!(
-											//file,
-											//"add {} {} {} {}\n",
-											//address, tx_id, n, value
-											//).unwrap();
 											tx.send(format!(
 												"add {} {} {} {}\n",
 												address, tx_id, n, value,
 											))
 											.unwrap();
 										} else {
-											//write!(
-											//	errfile,
-											//	"ERROR: public_key decode failed: {}\n",
-											//	asm
-											//)
 											tx.send(format!(
 												"ERROR: [block {}] public_key decode failed: {}\n",
 												i, asm
@@ -259,7 +255,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 											.unwrap();
 										}
 									} else {
-										//write!(errfile, "ERROR: hex decode failed: {}\n", asm).unwrap();
 										tx.send(format!(
 											"ERROR: [block {}] hex decode failed: {}\n",
 											i, asm
@@ -276,40 +271,61 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 				});
 				handles.push(next);
 
-				if handles.len() >= 16 {
+				if handles.len() >= MAX_THREAD_COUNT {
+					clean_recv(&receivers, &file, &errfile, handles.len())?;
 					for handle in handles {
 						handle.join().expect("problem waiting to join");
 					}
 					handles = Vec::new();
+					counter = 0;
+				} else {
+					counter = counter + 1;
 				}
 
 				index = index + 1;
 			}
 
-			let mut complete_count = 0;
-			loop {
-				let next = rx.recv().unwrap();
-				if next == "complete".to_string() {
-					complete_count += 1;
-					if complete_count == index {
-						break;
-					}
-				} else {
-					if next.starts_with("ERROR: ") {
-						write!(errfile, "{}", next)?;
-					} else {
-						write!(file, "{}", next)?;
-					}
-				}
+			clean_recv(&receivers, &file, &errfile, handles.len())?;
+			for handle in handles {
+				handle.join().expect("problem joining");
 			}
-
-			//for handle in handles {
-			//	handle.join().expect("problem waiting to join");
-			//}
 		}
 
 		cmd.wait()?;
 	}
 
+	Ok(())
+}
+
+fn clean_recv(
+	recvs: &Vec<Receiver<String>>,
+	file: &File,
+	errfile: &File,
+	len: usize,
+) -> Result<(), Error> {
+	let mut i = 0;
+	let recvs = &*recvs;
+	let mut file = &*file;
+	let mut errfile = &*errfile;
+	loop {
+		if i == len {
+			break;
+		}
+
+		let rx = &recvs[i];
+
+		loop {
+			let next = rx.recv().unwrap();
+			if next == "complete" {
+				break;
+			} else if next.starts_with("ERROR: ") {
+				write!(errfile, "{}", next).unwrap();
+			} else {
+				write!(file, "{}", next).unwrap();
+			}
+		}
+
+		i = i + 1;
+	}
 	Ok(())
 }

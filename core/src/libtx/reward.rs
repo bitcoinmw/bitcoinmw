@@ -38,13 +38,15 @@ pub fn output_btc_claim<K, B>(
 	amount: u64,
 	index: u32,
 	btc_sig: RecoverableSignature,
+	btc_recovery_bit: u8,
 ) -> Result<(Output, TxKernel), Error>
 where
 	K: Keychain,
 	B: ProofBuild,
 {
 	let ff = FeeFields::new(0, fee)?;
-	let kernel_features = build_btc_init_kernel_feature(ff, index, amount, btc_sig)?;
+	let kernel_features =
+		build_btc_init_kernel_feature(ff, index, amount, btc_sig, btc_recovery_bit)?;
 	output_impl(
 		keychain,
 		builder,

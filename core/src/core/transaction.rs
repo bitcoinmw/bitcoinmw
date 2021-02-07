@@ -331,8 +331,9 @@ pub fn build_btc_init_kernel_feature(
 	index: u32,
 	amount: u64,
 	btc_sig: RecoverableSignature,
+	btc_recovery_bit: u8,
 ) -> Result<KernelFeatures, Error> {
-	let (rec_id, data) = btc_sig.serialize_compact();
+	let (_rec_id, data) = btc_sig.serialize_compact();
 
 	let mut tmp = [0 as u8; 8];
 
@@ -359,9 +360,6 @@ pub fn build_btc_init_kernel_feature(
 
 	tmp.clone_from_slice(&data[56..64]);
 	let btc_sig_part8 = u64::from_le_bytes(tmp);
-
-	// TODO: handle errors
-	let btc_recovery_bit = rec_id.to_i32().try_into().unwrap();
 
 	Ok(KernelFeatures::BitcoinInit {
 		fee,

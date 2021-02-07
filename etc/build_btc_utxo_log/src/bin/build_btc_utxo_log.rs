@@ -253,15 +253,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 											//	asm
 											//)
 											tx.send(format!(
-												"ERROR: public_key decode failed: {}\n",
-												asm
+												"ERROR: [block {}] public_key decode failed: {}\n",
+												i, asm
 											))
 											.unwrap();
 										}
 									} else {
 										//write!(errfile, "ERROR: hex decode failed: {}\n", asm).unwrap();
-										tx.send(format!("ERROR: hex decode failed: {}\n", asm))
-											.unwrap();
+										tx.send(format!(
+											"ERROR: [block {}] hex decode failed: {}\n",
+											i, asm
+										))
+										.unwrap();
 									}
 								}
 							}

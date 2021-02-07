@@ -424,7 +424,9 @@ pub fn get_recoverable_signature(
 			let tmp = btc_sig_part8.to_le_bytes();
 			data[56..64].clone_from_slice(&tmp);
 
-			match RecoveryId::from_i32(btc_recovery_bit.into()) {
+			let rec_id = (btc_recovery_bit - 27) & 3;
+
+			match RecoveryId::from_i32(rec_id.into()) {
 				Ok(r) => RecoverableSignature::from_compact(&data, r),
 				Err(_) => Err(bitcoin::secp256k1::Error::InvalidMessage),
 			}

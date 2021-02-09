@@ -147,10 +147,10 @@ pub fn process_block(
 		// We know there are no double-spends etc. if this verifies successfully.
 		verify_block_sums(b, batch)?;
 
-		// Validate the block against BTC CLaim UTXOs.
+		// Validate the block against BTC Claim UTXOs.
 		// Make sure no duplicates
 		// TODO: Handle forks and reorgs
-		validate_btc_utxos(b, utxo_data)?;
+		validate_btc_utxos(b, utxo_data, &fork_point, &head)?;
 
 		// Apply the block to the txhashset state.
 		// Validate the txhashset roots and sizes against the block header.
@@ -177,7 +177,7 @@ pub fn process_block(
 
 	// Now that the block has been officially added, we update bitvecs with btc claims
 	// TODO: must be done on appropriate fork, for now just one
-	update_btc_utxo_bitvec(b, utxo_data)?;
+	update_btc_utxo_bitvec(b, utxo_data, &fork_point, &head)?;
 
 	// If we have no "tail" then set it now.
 	if ctx.batch.tail().is_err() {
@@ -628,7 +628,12 @@ pub fn rewind_and_apply_fork(
 	Ok(fork_point)
 }
 
-fn update_btc_utxo_bitvec(b: &Block, utxo_data: Option<&Weak<UtxoData>>) -> Result<(), Error> {
+fn update_btc_utxo_bitvec(
+	b: &Block,
+	utxo_data: Option<&Weak<UtxoData>>,
+	_fork_point: &BlockHeader,
+	_head: &Tip,
+) -> Result<(), Error> {
 	if utxo_data.is_none() {
 		return Ok(());
 	}
@@ -651,7 +656,12 @@ fn update_btc_utxo_bitvec(b: &Block, utxo_data: Option<&Weak<UtxoData>>) -> Resu
 	Ok(())
 }
 
-fn validate_btc_utxos(b: &Block, utxo_data: Option<&Weak<UtxoData>>) -> Result<(), Error> {
+fn validate_btc_utxos(
+	b: &Block,
+	utxo_data: Option<&Weak<UtxoData>>,
+	_fork_point: &BlockHeader,
+	_head: &Tip,
+) -> Result<(), Error> {
 	if utxo_data.is_none() {
 		return Ok(());
 	}

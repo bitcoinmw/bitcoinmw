@@ -85,7 +85,10 @@ fn real_main() -> i32 {
 	} else if args.is_present("usernet") {
 		global::ChainTypes::UserTesting
 	} else {
-		global::ChainTypes::Mainnet
+		// at the moment we exit for mainnet
+		println!("Mainnet not activated yet. Please run with the --testnet parameter.");
+		std::process::exit(-1);
+		//global::ChainTypes::Mainnet
 	};
 
 	// Deal with configuration file creation

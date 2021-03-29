@@ -182,7 +182,8 @@ checksum = "5f0dc55f2d8a1a85650ac47858bb001b4c0dd73d79e3c455a842925e68d29cd3"
 [[package]]
 name = "bitcoin"
 version = "0.26.0"
-source = "git+https://github.com/bitcoinmw/rust-bitcoin#c9c2e452e2b9e67ed479eaaaf9f3c21850338b94"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1ec5f88a446d66e7474a3b8fa2e348320b574463fb78d799d90ba68f79f48e0e"
 dependencies = [
  "bech32",
  "bitcoin_hashes",
@@ -192,8 +193,7 @@ dependencies = [
 [[package]]
 name = "bitcoin"
 version = "0.26.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1ec5f88a446d66e7474a3b8fa2e348320b574463fb78d799d90ba68f79f48e0e"
+source = "git+https://github.com/bitcoinmw/rust-bitcoin#c9c2e452e2b9e67ed479eaaaf9f3c21850338b94"
 dependencies = [
  "bech32",
  "bitcoin_hashes",

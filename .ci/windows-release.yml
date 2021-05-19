@@ -38,7 +38,7 @@ steps:
     displayName: Github release
     condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/tags/'), eq(variables['CI_JOB'], 'release' ))
     inputs:
-      gitHubConnection: 'bitcoinmw'
+      gitHubConnection: 'github.com_snape479'
       repositoryName: 'bitcoinmw/bitcoinmw'
       action: 'edit'
       target: '$(build.sourceVersion)'

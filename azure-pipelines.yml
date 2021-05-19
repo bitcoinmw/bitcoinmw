@@ -16,7 +16,6 @@ trigger:
   branches:
     include:
       - master
-      - milestone/*
   tags:
     include: ['*']
 

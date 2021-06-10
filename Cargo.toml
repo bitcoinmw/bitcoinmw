@@ -16,7 +16,7 @@ members = ["api", "chain", "config", "core", "keychain", "p2p", "servers", "stor
 exclude = ["etc/gen_gen", "etc/build_btc_utxo_log", "etc/build_btc_utxo_bin"]
 
 [[bin]]
-name = "grin"
+name = "bmw"
 path = "src/bin/grin.rs"
 
 [dependencies]

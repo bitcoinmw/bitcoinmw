@@ -11,7 +11,7 @@ Bitcoin MW is an implementation of the Mimblewimble protocol that maintains the 
   * Follows the Mimblewimble protocol, which provides hidden amounts and scaling advantages.
   * Cuckoo Cycle proof of work in two variants named Cuckaroo (ASIC-resistant) and Cuckatoo (ASIC-targeted).
   * Relatively fast block time: one minute.
-  * 
+  * Bitcoin's limited supply schedule (starting with the 3.125 coins per 10 minutes epoch) with an extended long tail reward that lasts 1,000 years. Total supply cap is still 21 million.
   * Transaction fees are based on the number of Outputs created/destroyed and total transaction size.
   * Smooth curve for difficulty adjustments.
 

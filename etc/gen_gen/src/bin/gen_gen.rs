@@ -79,7 +79,7 @@ fn main() {
 	{
 		// setup a tmp chain to set block header roots
 		core::global::set_local_chain_type(core::global::ChainTypes::UserTesting);
-		let tmp_chain = setup_chain(".grin.tmp", core::pow::mine_genesis_block().unwrap());
+		let tmp_chain = setup_chain(".bmw.tmp", core::pow::mine_genesis_block().unwrap());
 		tmp_chain.set_txhashset_roots(&mut gen).unwrap();
 	}
 
@@ -131,6 +131,7 @@ fn main() {
 	gen.validate(
 		&BlindingFactor::zero(),
 		Arc::new(util::RwLock::new(LruVerifierCache::new())),
+		None,
 	)
 	.unwrap();
 
@@ -205,6 +206,7 @@ fn setup_chain(dir_name: &str, genesis: core::core::Block) -> chain::Chain {
 		core::pow::verify_size,
 		verifier_cache,
 		false,
+		None,
 	)
 	.unwrap()
 }

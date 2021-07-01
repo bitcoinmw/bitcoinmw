@@ -72,7 +72,7 @@ pub struct PeerHandler {
 impl PeerHandler {
 	pub fn get_peers(&self, addr: Option<SocketAddr>) -> Result<Vec<PeerData>, Error> {
 		if let Some(addr) = addr {
-			let peer_addr = PeerAddr(addr);
+			let peer_addr = PeerAddr::Ip(addr);
 			let peer_data: PeerData = w(&self.peers)?.get_peer(peer_addr).map_err(|e| {
 				let e: Error = ErrorKind::Internal(format!("get peer error: {:?}", e)).into();
 				e
@@ -84,14 +84,14 @@ impl PeerHandler {
 	}
 
 	pub fn ban_peer(&self, addr: SocketAddr) -> Result<(), Error> {
-		let peer_addr = PeerAddr(addr);
+		let peer_addr = PeerAddr::Ip(addr);
 		w(&self.peers)?
 			.ban_peer(peer_addr, ReasonForBan::ManualBan)
 			.map_err(|e| ErrorKind::Internal(format!("ban peer error: {:?}", e)).into())
 	}
 
 	pub fn unban_peer(&self, addr: SocketAddr) -> Result<(), Error> {
-		let peer_addr = PeerAddr(addr);
+		let peer_addr = PeerAddr::Ip(addr);
 		w(&self.peers)?
 			.unban_peer(peer_addr)
 			.map_err(|e| ErrorKind::Internal(format!("unban peer error: {:?}", e)).into())
@@ -109,7 +109,7 @@ impl Handler for PeerHandler {
 		if let Ok(ip_addr) = command.parse() {
 			peer_addr = PeerAddr::from_ip(ip_addr);
 		} else if let Ok(addr) = command.parse() {
-			peer_addr = PeerAddr(addr);
+			peer_addr = PeerAddr::Ip(addr);
 		} else {
 			return response(
 				StatusCode::BAD_REQUEST,
@@ -134,7 +134,7 @@ impl Handler for PeerHandler {
 				if let Ok(ip_addr) = a.parse() {
 					PeerAddr::from_ip(ip_addr)
 				} else if let Ok(addr) = a.parse() {
-					PeerAddr(addr)
+					PeerAddr::Ip(addr)
 				} else {
 					return response(
 						StatusCode::BAD_REQUEST,

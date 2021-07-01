@@ -1,12 +1,14 @@
 *.swp
 .DS_Store
 .grin*
+.bmw*
 !node_clients
 !node_clients.rs
 target
 */Cargo.lock
 *.iml
 grin.log
+bmw.log
 wallet.seed
 test_output
 wallet_data

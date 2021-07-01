@@ -547,8 +547,8 @@ impl Handler {
 				{
 					debug!("resend updated block");
 					let mut state = self.current_state.write();
-					let wallet_listener_url = if !config.burn_reward {
-						Some(config.wallet_listener_url.clone())
+					let recipient_address = if !config.burn_reward {
+						Some(config.recipient_address.clone())
 					} else {
 						None
 					};
@@ -561,7 +561,7 @@ impl Handler {
 						tx_pool,
 						verifier_cache.clone(),
 						state.current_key_id.clone(),
-						wallet_listener_url,
+						recipient_address,
 					);
 
 					state.current_difficulty =

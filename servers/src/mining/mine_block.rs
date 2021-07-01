@@ -18,6 +18,7 @@
 use chrono::prelude::{DateTime, NaiveDateTime, Utc};
 use rand::{thread_rng, Rng};
 use serde_json::{json, Value};
+use std::str::FromStr;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
@@ -25,7 +26,10 @@ use std::time::Duration;
 use crate::api;
 use crate::chain;
 use crate::common::types::Error;
+use crate::common::types::ErrorKind;
+use crate::core::address::Address;
 use crate::core::core::{Output, TxKernel};
+use crate::core::libtx::proof::PaymentId;
 use crate::core::libtx::secp_ser;
 use crate::core::libtx::ProofBuilder;
 use crate::core::{consensus, core, global};
@@ -72,7 +76,7 @@ pub fn get_block(
 	tx_pool: &ServerTxPool,
 	verifier_cache: ServerVerifierCache,
 	key_id: Option<Identifier>,
-	wallet_listener_url: Option<String>,
+	recipient_address: Option<String>,
 ) -> (core::Block, BlockFees) {
 	let wallet_retry_interval = 5;
 	// get the latest chain state and build a block on top of it
@@ -81,34 +85,54 @@ pub fn get_block(
 		tx_pool,
 		verifier_cache.clone(),
 		key_id.clone(),
-		wallet_listener_url.clone(),
+		recipient_address.clone(),
 	);
 	while let Err(e) = result {
 		let mut new_key_id = key_id.to_owned();
-		match e {
-			self::Error::Chain(c) => match c.kind() {
-				chain::ErrorKind::DuplicateCommitment(_) => {
-					debug!(
-						"Duplicate commit for potential coinbase detected. Trying next derivation."
-					);
-					// use the next available key to generate a different coinbase commitment
-					new_key_id = None;
-				}
-				_ => {
-					error!("Chain Error: {}", c);
-				}
-			},
-			self::Error::WalletComm(_) => {
+		let kind = &*e.inner.get_context();
+		match kind {
+			self::ErrorKind::Chain(c) => {
+				// every chain error we do this just in case.
+				new_key_id = None;
+				error!("Chain Error: {}", c);
+			}
+			self::ErrorKind::WalletComm(_) => {
 				error!(
-					"Error building new block: Can't connect to wallet listener at {:?}; will retry",
-					wallet_listener_url.as_ref().unwrap()
-				);
+                                        "Error building new block: Can't connect to wallet listener at {:?}; will retry",
+                                        recipient_address.as_ref().unwrap()
+                                );
 				thread::sleep(Duration::from_secs(wallet_retry_interval));
 			}
 			ae => {
 				warn!("Error building new block: {:?}. Retrying.", ae);
 			}
 		}
+		/*
+				match e {
+					self::Error::Chain(c) => match c.kind() {
+						chain::ErrorKind::DuplicateCommitment(_) => {
+							debug!(
+								"Duplicate commit for potential coinbase detected. Trying next derivation."
+							);
+							// use the next available key to generate a different coinbase commitment
+							new_key_id = None;
+						}
+						_ => {
+							error!("Chain Error: {}", c);
+						}
+					},
+					self::Error::WalletComm(_) => {
+						error!(
+							"Error building new block: Can't connect to wallet listener at {:?}; will retry",
+							recipient_address.as_ref().unwrap()
+						);
+						thread::sleep(Duration::from_secs(wallet_retry_interval));
+					}
+					ae => {
+						warn!("Error building new block: {:?}. Retrying.", ae);
+					}
+				}
+		*/
 
 		// only wait if we are still using the same key: a different coinbase commitment is unlikely
 		// to have duplication
@@ -121,7 +145,7 @@ pub fn get_block(
 			tx_pool,
 			verifier_cache.clone(),
 			new_key_id,
-			wallet_listener_url.clone(),
+			recipient_address.clone(),
 		);
 	}
 	return result.unwrap();
@@ -134,7 +158,7 @@ fn build_block(
 	tx_pool: &ServerTxPool,
 	verifier_cache: ServerVerifierCache,
 	key_id: Option<Identifier>,
-	wallet_listener_url: Option<String>,
+	recipient_address: Option<String>,
 ) -> Result<(core::Block, BlockFees), Error> {
 	let head = chain.head_header()?;
 
@@ -174,11 +198,20 @@ fn build_block(
 		height,
 	};
 
-	let (output, kernel, block_fees) = get_coinbase(wallet_listener_url, block_fees, height)?;
-	let mut b = core::Block::from_reward(&head, &txs, output, kernel, difficulty.difficulty)?;
+	let (output, kernel, block_fees) = get_coinbase(recipient_address, block_fees, height)?;
+
+	let utxo_data = chain.get_utxo_data()?;
+	let mut b = core::Block::from_reward(
+		&head,
+		&txs,
+		output,
+		kernel,
+		difficulty.difficulty,
+		utxo_data.clone(),
+	)?;
 
 	// making sure we're not spending time mining a useless block
-	b.validate(&head.total_kernel_offset, verifier_cache)?;
+	b.validate(&head.total_kernel_offset, verifier_cache, utxo_data)?;
 
 	b.header.pow.nonce = thread_rng().gen();
 	b.header.pow.secondary_scaling = difficulty.secondary_scaling;
@@ -200,16 +233,16 @@ fn build_block(
 				// If this is a duplicate commitment then likely trying to use
 				// a key that hass already been derived but not in the wallet
 				// for some reason, allow caller to retry.
-				chain::ErrorKind::DuplicateCommitment(e) => Err(Error::Chain(
-					chain::ErrorKind::DuplicateCommitment(e).into(),
-				)),
+				chain::ErrorKind::DuplicateCommitment(e) => Err(ErrorKind::Chain(format!(
+					"{:?}",
+					chain::ErrorKind::DuplicateCommitment(e)
+				))
+				.into()),
 
 				// Some other issue, possibly duplicate kernel
 				_ => {
 					error!("Error setting txhashset root to build a block: {:?}", e);
-					Err(Error::Chain(
-						chain::ErrorKind::Other(format!("{:?}", e)).into(),
-					))
+					Err(ErrorKind::Chain(format!("{:?}", e)).into())
 				}
 			}
 		}
@@ -225,50 +258,66 @@ fn burn_reward(
 ) -> Result<(core::Output, core::TxKernel, BlockFees), Error> {
 	warn!("Burning block fees: {:?}", block_fees);
 	let keychain = ExtKeychain::from_random_seed(global::is_testnet())?;
-	let key_id = ExtKeychain::derive_key_id(1, 1, 0, 0, 0);
-	let (out, kernel) = crate::core::libtx::reward::output(
+	let (private_nonce, _pub_nonce) = keychain.secp().generate_keypair(&mut thread_rng()).unwrap();
+	let (_pri_view, pub_view) = keychain.secp().generate_keypair(&mut thread_rng()).unwrap();
+	let payment_id = PaymentId::new();
+	let recipient_addr = Address::from_one_pubkey(&pub_view, global::ChainTypes::AutomatedTesting);
+	let (out, kernel) = crate::core::libtx::reward::nit_output(
 		&keychain,
 		&ProofBuilder::new(&keychain),
-		&key_id,
+		private_nonce,
+		recipient_addr.clone(),
+		payment_id,
 		block_fees.fees,
 		false,
 		height,
 	)
 	.unwrap();
+
 	Ok((out, kernel, block_fees))
 }
 
-// Connect to the wallet listener and get coinbase.
-// Warning: If a wallet listener URL is not provided the reward will be "burnt"
+// build a coinbase from the recipient address or burn it if configured that way
 fn get_coinbase(
-	wallet_listener_url: Option<String>,
+	recipient_address: Option<String>,
 	block_fees: BlockFees,
 	height: u64,
 ) -> Result<(core::Output, core::TxKernel, BlockFees), Error> {
-	match wallet_listener_url {
+	match recipient_address {
 		None => {
 			// Burn it
 			return burn_reward(block_fees, height);
 		}
-		Some(wallet_listener_url) => {
-			let res = create_coinbase(&wallet_listener_url, &block_fees)?;
-			let output = res.output;
-			let kernel = res.kernel;
-			let key_id = res.key_id;
-			let block_fees = BlockFees {
-				key_id: key_id,
-				..block_fees
-			};
-
+		Some(recipient_address) => {
 			debug!("get_coinbase: {:?}", block_fees);
-			return Ok((output, kernel, block_fees));
+
+			// this keychain is just used for creating randoms so can be testnet
+			let keychain = ExtKeychain::from_random_seed(global::is_testnet())?;
+			let (private_nonce, _pub_nonce) =
+				keychain.secp().generate_keypair(&mut thread_rng()).unwrap();
+
+			let recipient_address = Address::from_str(&recipient_address)?;
+			let payment_id = PaymentId::new();
+			let (out, kernel) = crate::core::libtx::reward::nit_output(
+				&keychain,
+				&ProofBuilder::new(&keychain),
+				private_nonce,
+				recipient_address.clone(),
+				payment_id,
+				block_fees.fees,
+				false,
+				height,
+			)
+			.unwrap();
+
+			return Ok((out, kernel, block_fees));
 		}
 	}
 }
 
 /// Call the wallet API to create a coinbase output for the given block_fees.
 /// Will retry based on default "retry forever with backoff" behavior.
-fn create_coinbase(dest: &str, block_fees: &BlockFees) -> Result<CbData, Error> {
+fn _create_coinbase(dest: &str, block_fees: &BlockFees) -> Result<CbData, Error> {
 	let url = format!("{}/v2/foreign", dest);
 	let req_body = json!({
 		"jsonrpc": "2.0",
@@ -281,14 +330,15 @@ fn create_coinbase(dest: &str, block_fees: &BlockFees) -> Result<CbData, Error> 
 
 	trace!("Sending build_coinbase request: {}", req_body);
 	let req = api::client::create_post_request(url.as_str(), None, &req_body)?;
-	let res: String = api::client::send_request(req).map_err(|e| {
+	let res: Result<String, Error> = api::client::send_request(req).map_err(|e| {
 		let report = format!(
 			"Failed to get coinbase from {}. Is the wallet listening? {}",
 			dest, e
 		);
 		error!("{}", report);
-		Error::WalletComm(report)
-	})?;
+		ErrorKind::WalletComm(report).into()
+	});
+	let res = res?;
 
 	let res: Value = serde_json::from_str(&res).unwrap();
 	trace!("Response: {}", res);
@@ -298,7 +348,7 @@ fn create_coinbase(dest: &str, block_fees: &BlockFees) -> Result<CbData, Error> 
 			dest, res["error"]["code"], res["error"]["message"]
 		);
 		error!("{}", report);
-		return Err(Error::WalletComm(report));
+		return Err(ErrorKind::WalletComm(report).into());
 	}
 
 	let cb_data = res["result"]["Ok"].clone();
@@ -308,7 +358,7 @@ fn create_coinbase(dest: &str, block_fees: &BlockFees) -> Result<CbData, Error> 
 		Err(e) => {
 			let report = format!("Couldn't deserialize CbData: {}", e);
 			error!("{}", report);
-			return Err(Error::WalletComm(report));
+			return Err(ErrorKind::WalletComm(report).into());
 		}
 	};
 

@@ -44,7 +44,7 @@ fn start_server_tui(config: servers::ServerConfig, logs_rx: Option<mpsc::Receive
 	// Run the UI controller.. here for now for simplicity to access
 	// everything it might need
 	if config.run_tui.unwrap_or(false) {
-		warn!("Starting GRIN in UI mode...");
+		warn!("Starting BMW in UI mode...");
 		servers::Server::start(
 			config,
 			logs_rx,
@@ -57,7 +57,7 @@ fn start_server_tui(config: servers::ServerConfig, logs_rx: Option<mpsc::Receive
 		)
 		.unwrap();
 	} else {
-		warn!("Starting GRIN w/o UI...");
+		warn!("Starting BMW w/o UI...");
 		servers::Server::start(
 			config,
 			logs_rx,
@@ -80,8 +80,8 @@ fn start_server_tui(config: servers::ServerConfig, logs_rx: Option<mpsc::Receive
 }
 
 /// Handles the server part of the command line, mostly running, starting and
-/// stopping the Grin blockchain server. Processes all the command line
-/// arguments to build a proper configuration and runs Grin with that
+/// stopping the BMW blockchain server. Processes all the command line
+/// arguments to build a proper configuration and runs BMW with that
 /// configuration.
 pub fn server_command(
 	server_args: Option<&ArgMatches<'_>>,
@@ -101,16 +101,19 @@ pub fn server_command(
 			server_config.api_http_addr = format!("{}:{}", default_ip, api_port);
 		}
 
-		if let Some(wallet_url) = a.value_of("wallet_url") {
+		if let Some(recipient_address) = a.value_of("recipient_address") {
 			server_config
 				.stratum_mining_config
 				.as_mut()
 				.unwrap()
-				.wallet_listener_url = wallet_url.to_string();
+				.recipient_address = recipient_address.to_string();
 		}
 
 		if let Some(seeds) = a.values_of("seed") {
-			let peers = seeds.filter_map(|s| s.parse().ok()).map(PeerAddr).collect();
+			let peers = seeds
+				.filter_map(|s| s.parse().ok())
+				.map(PeerAddr::Ip)
+				.collect();
 			server_config.p2p_config.seeding_type = Seeding::List;
 			server_config.p2p_config.seeds = Some(PeerAddrs { peers });
 		}
@@ -122,12 +125,12 @@ pub fn server_command(
 				start_server(server_config, logs_rx);
 			}
 			("", _) => {
-				println!("Subcommand required, use 'grin help server' for details");
+				println!("Subcommand required, use 'bmw help server' for details");
 			}
 			(cmd, _) => {
 				println!(":: {:?}", server_args);
 				panic!(
-					"Unknown server command '{}', use 'grin help server' for details",
+					"Unknown server command '{}', use 'bmw help server' for details",
 					cmd
 				);
 			}

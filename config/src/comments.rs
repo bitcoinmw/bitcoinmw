@@ -21,14 +21,14 @@ fn comments() -> HashMap<String, String> {
 	retval.insert(
 		"[server]".to_string(),
 		"
-# Generated Server Configuration File for Grin
+# Generated Server Configuration File for BMW
 #
-# When running the grin executable without specifying any command line
+# When running the bmw executable without specifying any command line
 # arguments, it will look for this file in two places, in the following
 # order:
 #
 # -The working directory
-# -[user home]/.grin
+# -[user home]/.bmw
 #
 
 #########################################
@@ -43,6 +43,8 @@ fn comments() -> HashMap<String, String> {
 	retval.insert(
 		"api_http_addr".to_string(),
 		"
+#bypass the checksum verification of the BTC utxo binary (only used for testing)
+#bypass_checksum=false
 #path of TLS certificate file, self-signed certificates are not supported
 #tls_certificate_file = \"\"
 #location of bitcoin utxo binary
@@ -76,7 +78,7 @@ fn comments() -> HashMap<String, String> {
 	retval.insert(
 		"db_root".to_string(),
 		"
-#the directory, relative to current, in which the grin blockchain
+#the directory, relative to current, in which the bmw blockchain
 #is stored
 "
 		.to_string(),
@@ -407,9 +409,9 @@ fn comments() -> HashMap<String, String> {
 	);
 
 	retval.insert(
-		"wallet_listener_url".to_string(),
+		"recipient_address".to_string(),
 		"
-#the wallet receiver to which coinbase rewards will be sent
+#the address to mine bmw to
 "
 		.to_string(),
 	);

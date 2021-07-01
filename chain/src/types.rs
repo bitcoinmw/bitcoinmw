@@ -47,6 +47,8 @@ pub enum SyncStatus {
 	/// Not enough peers to do anything yet, boolean indicates whether
 	/// we should wait at all or ignore and start ASAP
 	AwaitingPeers(bool),
+	/// We are syncing the btc utxo set
+	UtxoSync,
 	/// Downloading block headers
 	HeaderSync {
 		/// current node height
@@ -58,6 +60,13 @@ pub enum SyncStatus {
 	TxHashsetDownload(TxHashsetDownloadStats),
 	/// Setting up before validation
 	TxHashsetSetup,
+	/// Validating the R signatures
+	TxHashsetRsigsValidation {
+		/// R signatures validated
+		rsigs: u64,
+		/// R signatures in total
+		rsigs_total: u64,
+	},
 	/// Validating the kernels
 	TxHashsetKernelsValidation {
 		/// kernels validated
@@ -200,6 +209,10 @@ impl SyncState {
 impl TxHashsetWriteStatus for SyncState {
 	fn on_setup(&self) {
 		self.update(SyncStatus::TxHashsetSetup);
+	}
+
+	fn on_validation_rsigs(&self, rsigs: u64, rsigs_total: u64) {
+		self.update(SyncStatus::TxHashsetRsigsValidation { rsigs, rsigs_total });
 	}
 
 	fn on_validation_kernels(&self, kernels: u64, kernels_total: u64) {
@@ -415,6 +428,8 @@ pub trait ChainAdapter {
 pub trait TxHashsetWriteStatus {
 	/// First setup of the txhashset
 	fn on_setup(&self);
+	/// Starting R signature validation
+	fn on_validation_rsigs(&self, rsigs: u64, rsigs_total: u64);
 	/// Starting kernel validation
 	fn on_validation_kernels(&self, kernels: u64, kernel_total: u64);
 	/// Starting rproof validation
@@ -430,6 +445,7 @@ pub struct NoStatus;
 
 impl TxHashsetWriteStatus for NoStatus {
 	fn on_setup(&self) {}
+	fn on_validation_rsigs(&self, _rs: u64, _rts: u64) {}
 	fn on_validation_kernels(&self, _ks: u64, _kts: u64) {}
 	fn on_validation_rproofs(&self, _rs: u64, _rt: u64) {}
 	fn on_save(&self) {}

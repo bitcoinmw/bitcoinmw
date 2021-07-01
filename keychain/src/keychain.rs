@@ -23,7 +23,7 @@ use crate::extkey_bip32::{BIP32GrinHasher, ExtendedPrivKey, ExtendedPubKey};
 use crate::types::{
 	BlindSum, BlindingFactor, Error, ExtKeychainPath, Identifier, Keychain, SwitchCommitmentType,
 };
-use crate::util::secp::key::{PublicKey, SecretKey};
+pub use crate::util::secp::key::{PublicKey, SecretKey};
 use crate::util::secp::pedersen::Commitment;
 use crate::util::secp::{self, Message, Secp256k1, Signature};
 
@@ -128,6 +128,20 @@ impl Keychain for ExtKeychain {
 		Ok(commit)
 	}
 
+	fn commit_with_key(
+		&self,
+		amount: u64,
+		key: SecretKey,
+		switch: SwitchCommitmentType,
+	) -> Result<Commitment, Error> {
+		let blind = match switch {
+			SwitchCommitmentType::Regular => self.secp.blind_switch(amount, key)?,
+			SwitchCommitmentType::None => key,
+		};
+		let commit = self.secp.commit(amount, blind.clone())?;
+		Ok(commit)
+	}
+
 	fn blind_sum(&self, blind_sum: &BlindSum) -> Result<BlindingFactor, Error> {
 		let mut pos_keys: Vec<SecretKey> = blind_sum
 			.positive_key_ids
@@ -205,6 +219,21 @@ impl Keychain for ExtKeychain {
 
 	fn secp(&self) -> &Secp256k1 {
 		&self.secp
+	}
+
+	/// Schnorr signature
+	fn schnorr_sign(&self, msg: &Message, private_key: &SecretKey) -> Result<Signature, Error> {
+		let pk = PublicKey::from_secret_key(self.secp(), private_key)?;
+		Ok(secp::aggsig::sign_single(
+			self.secp(),
+			&msg,
+			private_key,
+			None,
+			None,
+			None,
+			Some(&pk),
+			None,
+		)?)
 	}
 }
 

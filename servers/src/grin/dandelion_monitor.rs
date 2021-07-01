@@ -151,6 +151,8 @@ fn process_fluff_phase(
 		transaction::Weighting::AsTransaction,
 		verifier_cache.clone(),
 		header.height,
+		tx_pool.blockchain.get_utxo_data()?,
+		None,
 	)?;
 
 	tx_pool.add_to_pool(TxSource::Fluff, agg_tx, false, &header)?;

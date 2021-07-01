@@ -40,7 +40,7 @@ use crate::router::Router;
 use crate::util::to_base64;
 use crate::util::RwLock;
 use crate::web::*;
-use bitcoinmw_loader::loader::UtxoData;
+use bmw_utxo::utxo_data::UtxoData;
 use easy_jsonrpc_mw::{Handler, MaybeReply};
 use hyper::{Body, Request, Response, StatusCode};
 use serde::Serialize;
@@ -58,7 +58,7 @@ pub fn node_apis<B, P, V>(
 	api_secret: Option<String>,
 	foreign_api_secret: Option<String>,
 	tls_config: Option<TLSConfig>,
-	utxo_data: Arc<UtxoData>,
+	utxo_data: Arc<RwLock<UtxoData>>,
 ) -> Result<(), Error>
 where
 	B: BlockChain + 'static,
@@ -69,8 +69,7 @@ where
 
 	// Add basic auth to v2 owner API
 	if let Some(api_secret) = api_secret {
-		let api_basic_auth =
-			"Basic ".to_string() + &to_base64(&("grin:".to_string() + &api_secret));
+		let api_basic_auth = "Basic ".to_string() + &to_base64(&("bmw:".to_string() + &api_secret));
 		let basic_auth_middleware = Arc::new(BasicAuthMiddleware::new(
 			api_basic_auth,
 			&GRIN_BASIC_REALM,
@@ -88,8 +87,7 @@ where
 
 	// Add basic auth to v2 foreign API
 	if let Some(api_secret) = foreign_api_secret {
-		let api_basic_auth =
-			"Basic ".to_string() + &to_base64(&("grin:".to_string() + &api_secret));
+		let api_basic_auth = "Basic ".to_string() + &to_base64(&("bmw:".to_string() + &api_secret));
 		let basic_auth_middleware = Arc::new(BasicAuthURIMiddleware::new(
 			api_basic_auth,
 			&GRIN_FOREIGN_BASIC_REALM,
@@ -185,7 +183,7 @@ where
 	pub chain: Weak<Chain>,
 	pub tx_pool: Weak<RwLock<pool::TransactionPool<B, P, V>>>,
 	pub sync_state: Weak<SyncState>,
-	pub utxo_data: Weak<UtxoData>,
+	pub utxo_data: Weak<RwLock<UtxoData>>,
 }
 
 impl<B, P, V> ForeignAPIHandlerV2<B, P, V>
@@ -199,7 +197,7 @@ where
 		chain: Weak<Chain>,
 		tx_pool: Weak<RwLock<pool::TransactionPool<B, P, V>>>,
 		sync_state: Weak<SyncState>,
-		utxo_data: Weak<UtxoData>,
+		utxo_data: Weak<RwLock<UtxoData>>,
 	) -> Self {
 		ForeignAPIHandlerV2 {
 			chain,

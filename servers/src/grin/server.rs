@@ -16,20 +16,25 @@
 //! the peer-to-peer server, the blockchain and the transaction pool) and acts
 //! as a facade.
 
-use bitcoinmw_loader::loader::UtxoData;
+use crate::common::stats::UtxoStats;
+use crate::tor::config as tor_config;
+use crate::tor::process as tor_process;
+use crate::util::secp;
+use bmw_utxo::utxo_data::UtxoData;
+use grin_core::address::Address;
+use grin_util::OnionV3Address;
 use std::fs::File;
 use std::io::prelude::*;
 use std::path::Path;
+use std::path::PathBuf;
 use std::process::exit;
+use std::str::FromStr;
 use std::sync::{mpsc, Arc};
 use std::{convert::TryInto, fs};
 use std::{
 	thread::{self, JoinHandle},
 	time::{self, Duration},
 };
-
-use fs2::FileExt;
-use walkdir::WalkDir;
 
 use crate::api;
 use crate::api::TLSConfig;
@@ -41,7 +46,7 @@ use crate::common::hooks::{init_chain_hooks, init_net_hooks};
 use crate::common::stats::{
 	ChainStats, DiffBlock, DiffStats, PeerStats, ServerStateInfo, ServerStats, TxStats,
 };
-use crate::common::types::{Error, ServerConfig, StratumServerConfig};
+use crate::common::types::{Error, ErrorKind, ServerConfig, StratumServerConfig};
 use crate::core::core::hash::Hashed;
 use crate::core::core::verifier_cache::LruVerifierCache;
 use crate::core::ser::ProtocolVersion;
@@ -52,10 +57,14 @@ use crate::mining::test_miner::Miner;
 use crate::p2p;
 use crate::p2p::types::{Capabilities, PeerAddr};
 use crate::pool;
+use crate::tor::process::TorProcess;
 use crate::util::file::get_first_line;
 use crate::util::{RwLock, StopState};
-use bitcoinmw_loader::loader;
+use fs2::FileExt;
 use grin_util::logger::LogEntry;
+use grin_util::secp::Secp256k1;
+use std::sync::mpsc::{Receiver, Sender};
+use walkdir::WalkDir;
 
 /// Arcified  thread-safe TransactionPool with type parameters used by server components
 pub type ServerTxPool =
@@ -87,7 +96,9 @@ pub struct Server {
 	connect_thread: Option<JoinHandle<()>>,
 	sync_thread: JoinHandle<()>,
 	dandelion_thread: JoinHandle<()>,
-	_utxo_data: Arc<UtxoData>,
+	utxo_data: Arc<RwLock<UtxoData>>,
+	/// Used to keep TorProcess in scope.
+	_tor_process: Option<TorProcess>,
 }
 
 impl Server {
@@ -136,7 +147,7 @@ impl Server {
 	fn one_grin_at_a_time(config: &ServerConfig) -> Result<Arc<File>, Error> {
 		let path = Path::new(&config.db_root);
 		fs::create_dir_all(&path)?;
-		let path = path.join("grin.lock");
+		let path = path.join("bmw.lock");
 		let lock_file = fs::OpenOptions::new()
 			.read(true)
 			.write(true)
@@ -146,7 +157,7 @@ impl Server {
 			let mut stderr = std::io::stderr();
 			writeln!(
 				&mut stderr,
-				"Failed to lock {:?} (grin server already running?)",
+				"Failed to lock {:?} (bmw server already running?)",
 				path
 			)
 			.expect("Could not write to stderr");
@@ -155,10 +166,45 @@ impl Server {
 		Ok(Arc::new(lock_file))
 	}
 
+	fn validate_config(config: ServerConfig) -> Result<(), Error> {
+		if config.stratum_mining_config.is_some() {
+			let stratum_config = config.stratum_mining_config.unwrap();
+			if stratum_config.enable_stratum_server.is_some() {
+				let enable_stratum_server = stratum_config.enable_stratum_server.unwrap();
+				if enable_stratum_server {
+					let address = Address::from_str(&stratum_config.recipient_address);
+					if address.is_err() && !stratum_config.burn_reward {
+						return Err(ErrorKind::Configuration(format!(
+							"recipient_address [\"{}\"] is not valid",
+							stratum_config.recipient_address
+						))
+						.into());
+					} else if !address.is_err() {
+						let address = address.unwrap();
+						if address.network != config.chain_type {
+							return Err(ErrorKind::Configuration(format!(
+								"recipient_address [\"{}\"] is not valid. \
+Wrong network! {:?} != {:?}",
+								stratum_config.recipient_address,
+								address.network,
+								config.chain_type,
+							))
+							.into());
+						}
+					}
+				}
+			}
+		}
+
+		Ok(())
+	}
+
 	/// Instantiates a new server associated with the provided future reactor.
 	pub fn new(config: ServerConfig) -> Result<Server, Error> {
 		// Obtain our lock_file or fail immediately with an error.
 		let lock_file = Server::one_grin_at_a_time(&config)?;
+
+		Server::validate_config(config.clone())?;
 
 		// Defaults to None (optional) in config file.
 		// This translates to false here.
@@ -190,7 +236,9 @@ impl Server {
 		));
 
 		let genesis = match config.chain_type {
-			global::ChainTypes::AutomatedTesting => pow::mine_genesis_block().unwrap(),
+			global::ChainTypes::AutomatedTesting | global::ChainTypes::PerfTesting => {
+				pow::mine_genesis_block().unwrap()
+			}
 			global::ChainTypes::UserTesting => pow::mine_genesis_block().unwrap(),
 			global::ChainTypes::Testnet => genesis::genesis_test(),
 			global::ChainTypes::Mainnet => genesis::genesis_main(),
@@ -198,18 +246,79 @@ impl Server {
 
 		info!("Starting server, genesis block: {}", genesis.hash());
 
+		let chain_type = if config.bypass_checksum.unwrap_or(false) {
+			bmw_utxo::utxo_data::ChainType::Bypass
+		} else {
+			match config.chain_type {
+				global::ChainTypes::Mainnet => bmw_utxo::utxo_data::ChainType::Mainnet,
+				global::ChainTypes::Testnet => bmw_utxo::utxo_data::ChainType::Testnet,
+				_ => bmw_utxo::utxo_data::ChainType::Other,
+			}
+		};
 		// load bitcoin utxo binary
 		let binary_location = config
 			.binary_location
 			.clone()
-			.unwrap_or("/opt/gen_bin.bin".to_string());
-		let res = loader::load_binary(&binary_location);
+			.unwrap_or(format!("{}/gen_bin.bin", config.db_root).to_string());
+		info!("using binary_location={}", binary_location);
+		let res: Result<UtxoData, Error> = if config.binary_location.is_none()
+			&& !Path::new(&binary_location).exists()
+		{
+			warn!("UtxoData has not been synced yet");
+			// we have not synced yet.
+			Ok(UtxoData::new(chain_type)?)
+		} else if config.bypass_checksum.unwrap_or(false) {
+			let mut ret = UtxoData::new(chain_type)?;
+			if ret.load_binary(&binary_location).is_err() {
+				Err(ErrorKind::Configuration("Could not load the utxo binary".to_string()).into())
+			} else {
+				Ok(ret)
+			}
+		} else {
+			match config.chain_type {
+				global::ChainTypes::Mainnet => {
+					let mut ret = UtxoData::new(chain_type)?;
+					if ret.load_binary(&binary_location).is_err() {
+						Err(
+							ErrorKind::Configuration("Could not load the utxo binary".to_string())
+								.into(),
+						)
+					} else {
+						Ok(ret)
+					}
+				}
+				global::ChainTypes::Testnet => {
+					let mut ret = UtxoData::new(chain_type)?;
+					if ret.load_binary(&binary_location).is_err() {
+						Err(
+							ErrorKind::Configuration("Could not load the utxo binary".to_string())
+								.into(),
+						)
+					} else {
+						Ok(ret)
+					}
+				}
+				_ => {
+					let mut ret = UtxoData::new(chain_type)?;
+					if ret.load_binary(&binary_location).is_err() {
+						Err(
+							ErrorKind::Configuration("Could not load the utxo binary".to_string())
+								.into(),
+						)
+					} else {
+						Ok(ret)
+					}
+				}
+			}
+		};
+
 		if res.is_err() {
 			error!("Could not load binary: {:?}", res);
 			println!("Could not load binary: {:?}", res);
 			exit(0);
 		}
-		let _utxo_data = Arc::new(res.unwrap());
+		let utxo_data = res.unwrap();
+		let utxo_data = Arc::new(RwLock::new(utxo_data));
 
 		let shared_chain = Arc::new(chain::Chain::init(
 			config.db_root.clone(),
@@ -218,7 +327,7 @@ impl Server {
 			pow::verify_size,
 			verifier_cache.clone(),
 			archive_mode,
-			Some(Arc::downgrade(&_utxo_data)),
+			Some(Arc::downgrade(&utxo_data)),
 		)?);
 
 		pool_adapter.set_chain(shared_chain.clone());
@@ -237,6 +346,10 @@ impl Server {
 		let capabilities = Capabilities::default();
 		debug!("Capabilities: {:?}", capabilities);
 
+		// setup tor connection here
+		let (onion_address, socks_port, _tor_process) =
+			Server::setup_tor(config.clone(), stop_state.clone())?;
+
 		let p2p_server = Arc::new(p2p::Server::new(
 			&config.db_root,
 			capabilities,
@@ -244,6 +357,9 @@ impl Server {
 			net_adapter.clone(),
 			genesis.hash(),
 			stop_state.clone(),
+			socks_port,
+			onion_address,
+			Some(Arc::downgrade(&utxo_data)),
 		)?);
 
 		// Initialize various adapters with our dynamic set of connected peers.
@@ -262,9 +378,10 @@ impl Server {
 				p2p::Seeding::List => match &config.p2p_config.seeds {
 					Some(seeds) => seed::predefined_seeds(seeds.peers.clone()),
 					None => {
-						return Err(Error::Configuration(
-							"Seeds must be configured for seeding type List".to_owned(),
-						));
+						return Err(ErrorKind::Configuration(
+							"Seeds must be configured for seeding type List".to_string(),
+						)
+						.into());
 					}
 				},
 				p2p::Seeding::DNSSeed => seed::default_dns_seeds(),
@@ -294,6 +411,8 @@ impl Server {
 			p2p_server.peers.clone(),
 			shared_chain.clone(),
 			stop_state.clone(),
+			utxo_data.clone(),
+			binary_location,
 		)?;
 
 		let p2p_inner = p2p_server.clone();
@@ -315,7 +434,7 @@ impl Server {
 					Some(k) => k,
 					None => {
 						let msg = "Private key for certificate is not set".to_string();
-						return Err(Error::ArgumentError(msg));
+						return Err(ErrorKind::ArgumentError(msg).into());
 					}
 				};
 				Some(TLSConfig::new(file, key))
@@ -332,7 +451,7 @@ impl Server {
 			api_secret,
 			foreign_api_secret,
 			tls_conf,
-			_utxo_data.clone(),
+			utxo_data.clone(),
 		)?;
 
 		info!("Starting dandelion monitor: {}", &config.api_http_addr);
@@ -344,7 +463,7 @@ impl Server {
 			stop_state.clone(),
 		)?;
 
-		warn!("Grin server started.");
+		warn!("BMW server started.");
 		Ok(Server {
 			config,
 			p2p: p2p_server,
@@ -360,8 +479,182 @@ impl Server {
 			connect_thread,
 			sync_thread,
 			dandelion_thread,
-			_utxo_data,
+			utxo_data,
+			_tor_process,
 		})
+	}
+
+	/// Initialize the TOR listener for internal tor
+	pub fn init_tor_listener(
+		addr: &str,
+		api_addr: &str,
+		tor_base: Option<&str>,
+		socks_port: u16,
+	) -> Result<(String, TorProcess), Error> {
+		let mut process = tor_process::TorProcess::new();
+		let tor_dir = if tor_base.is_some() {
+			format!("{}/tor/listener", tor_base.unwrap())
+		} else {
+			format!("{}/tor/listener", "~/.bmw/main")
+		};
+
+		let home_dir = dirs::home_dir()
+			.map(|p| p.to_str().unwrap().to_string())
+			.unwrap_or("~".to_string());
+		let tor_dir = tor_dir.replace("~", &home_dir);
+
+		// remove all other onion addresses that were previously used.
+
+		let onion_service_dir = format!("{}/onion_service_addresses", tor_dir.clone());
+		let mut onion_address = "".to_string();
+		let mut found = false;
+		if std::path::Path::new(&onion_service_dir).exists() {
+			for entry in fs::read_dir(onion_service_dir)? {
+				onion_address = entry.unwrap().file_name().into_string().unwrap();
+				found = true;
+			}
+		}
+
+		let mut sec_key_vec = None;
+		let scoped_vec;
+		let mut existing_onion = None;
+		if !found {
+			let sec_key = secp::key::SecretKey::new(&Secp256k1::new(), &mut rand::thread_rng());
+			scoped_vec = vec![sec_key.clone()];
+			sec_key_vec = Some((scoped_vec).as_slice());
+
+			onion_address = OnionV3Address::from_private(&sec_key.0)
+				.map_err(|e| {
+					error!("unable to build onion address due to {:?}. Halting!", e);
+					std::process::exit(-1);
+				})
+				.unwrap()
+				.to_string();
+		} else {
+			existing_onion = Some(onion_address.clone());
+		}
+		tor_config::output_tor_listener_config(
+			&tor_dir,
+			addr,
+			api_addr,
+			sec_key_vec,
+			existing_onion,
+			socks_port,
+		)
+		.map_err(|e| {
+			error!("failed to configure tor due to {:?}. Halting!", e);
+			std::process::exit(-1);
+		})
+		.unwrap();
+
+		info!(
+			"Starting Tor inbound listener at address {}.onion, binding to {}",
+			onion_address, addr
+		);
+
+		// Start Tor process
+		let tor_path = PathBuf::from(format!("{}/torrc", tor_dir));
+		let tor_path = fs::canonicalize(&tor_path)?;
+		let tor_path = Server::adjust_canonicalization(tor_path);
+
+		let res = process
+			.torrc_path(&tor_path)
+			.working_dir(&tor_dir)
+			.timeout(200)
+			.completion_percent(100)
+			.launch();
+
+		match res {
+			Err(e) => Err(ErrorKind::Configuration(e.to_string()).into()),
+			Ok(_) => Ok((onion_address.to_string(), process)),
+		}
+	}
+
+	#[cfg(not(target_os = "windows"))]
+	fn adjust_canonicalization<P: AsRef<Path>>(p: P) -> String {
+		p.as_ref().display().to_string()
+	}
+
+	#[cfg(target_os = "windows")]
+	fn adjust_canonicalization<P: AsRef<Path>>(p: P) -> String {
+		const VERBATIM_PREFIX: &str = r#"\\?\"#;
+		let p = p.as_ref().display().to_string();
+		if p.starts_with(VERBATIM_PREFIX) {
+			p[VERBATIM_PREFIX.len()..].to_string()
+		} else {
+			p
+		}
+	}
+
+	fn setup_tor(
+		config: ServerConfig,
+		stop_state: Arc<StopState>,
+	) -> Result<(String, u16, Option<TorProcess>), Error> {
+		let o = config.p2p_config.onion_address.clone();
+
+		if o.is_some() && !config.p2p_config.tor_external {
+			return Err(ErrorKind::Configuration(
+				"onion_address cannot be specified when tor_external is true".to_string(),
+			)
+			.into());
+		} else if !o.is_some() && config.p2p_config.tor_external {
+			return Err(ErrorKind::Configuration(
+				"With external_tor = true, onion_address must be specified".to_string(),
+			)
+			.into());
+		}
+
+		if config.p2p_config.tor_external {
+			let onion_address = o.unwrap();
+			Ok((onion_address, config.p2p_config.tor_port, None))
+		} else {
+			// setup internal tor here
+			let (input, output): (
+				Sender<(Option<TorProcess>, Option<String>)>,
+				Receiver<(Option<TorProcess>, Option<String>)>,
+			) = mpsc::channel();
+
+			let cloned_config = config.clone();
+			thread::Builder::new()
+				.name("tor_listener".to_string())
+				.spawn(move || {
+					let res = Server::init_tor_listener(
+						&format!(
+							"{}:{}",
+							cloned_config.p2p_config.host, cloned_config.p2p_config.port
+						),
+						&cloned_config.api_http_addr,
+						Some(&cloned_config.db_root),
+						cloned_config.p2p_config.tor_port,
+					);
+
+					match res {
+						Ok((onion_address, tp)) => {
+							input
+								.send((Some(tp), Some(format!("{}.onion", onion_address.clone()))))
+								.unwrap();
+							loop {
+								std::thread::sleep(std::time::Duration::from_millis(10));
+								if stop_state.is_stopped() {
+									break;
+								}
+							}
+						}
+						Err(e) => {
+							input.send((None, None)).unwrap();
+							error!("failed to start Tor due to: {:?}", e);
+						}
+					};
+				})?;
+
+			let resp = output.recv()?;
+			if resp.0.is_none() {
+				error!("TOR did not start! Halting.");
+				std::process::exit(-1);
+			}
+			let onion_address = resp.1.unwrap();
+			Ok((onion_address, config.p2p_config.tor_port, resp.0))
+		}
 	}
 
 	/// Asks the server to connect to a peer at the provided network address.
@@ -410,17 +703,13 @@ impl Server {
 
 	/// Start mining for blocks internally on a separate thread. Relies on
 	/// internal miner, and should only be used for automated testing. Burns
-	/// reward if wallet_listener_url is 'None'
-	pub fn start_test_miner(
-		&self,
-		wallet_listener_url: Option<String>,
-		stop_state: Arc<StopState>,
-	) {
+	/// reward if recipient_address is 'None'
+	pub fn start_test_miner(&self, recipient_address: Option<String>, stop_state: Arc<StopState>) {
 		info!("start_test_miner - start",);
 		let sync_state = self.sync_state.clone();
-		let config_wallet_url = match wallet_listener_url.clone() {
+		let recipient_address = match recipient_address.clone() {
 			Some(u) => u,
-			None => String::from("http://127.0.0.1:13415"),
+			None => String::from("replace"),
 		};
 
 		let config = StratumServerConfig {
@@ -428,7 +717,7 @@ impl Server {
 			burn_reward: false,
 			enable_stratum_server: None,
 			stratum_server_addr: None,
-			wallet_listener_url: config_wallet_url,
+			recipient_address: recipient_address.clone(),
 			minimum_share_difficulty: 1,
 		};
 
@@ -443,7 +732,7 @@ impl Server {
 		miner.set_debug_output_id(format!("Port {}", self.config.p2p_config.port));
 		let _ = thread::Builder::new()
 			.name("test_miner".to_string())
-			.spawn(move || miner.run_loop(wallet_listener_url));
+			.spawn(move || miner.run_loop(Some(recipient_address)));
 	}
 
 	/// The chain head
@@ -560,6 +849,10 @@ impl Server {
 			.fold(0, |acc, m| acc + m.len());
 
 		let disk_usage_gb = format!("{:.*}", 3, (disk_usage_bytes as f64 / 1_000_000_000_f64));
+		let utxo_percent = {
+			let utxo_data = self.utxo_data.read();
+			utxo_data.load_percentage()
+		};
 
 		Ok(ServerStats {
 			peer_count: self.peer_count(),
@@ -571,6 +864,9 @@ impl Server {
 			peer_stats: peer_stats,
 			diff_stats: diff_stats,
 			tx_stats: tx_stats,
+			utxo_stats: UtxoStats {
+				percentage: utxo_percent,
+			},
 		})
 	}
 

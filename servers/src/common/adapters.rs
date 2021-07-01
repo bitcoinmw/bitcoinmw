@@ -43,6 +43,7 @@ use crate::p2p::types::PeerInfo;
 use crate::pool::{self, BlockChain, PoolAdapter};
 use crate::util::secp::pedersen::RangeProof;
 use crate::util::OneTime;
+use bmw_utxo::utxo_data::UtxoData;
 use chrono::prelude::*;
 use chrono::Duration;
 use rand::prelude::*;
@@ -167,6 +168,9 @@ where
 		if self.chain().block_exists(cb.hash())? {
 			return Ok(true);
 		}
+
+		let utxo_data = self.chain().get_utxo_data()?;
+
 		let bhash = cb.hash();
 		debug!(
 			"Received compact_block {} at {} from {} [out/kern/kern_ids: {}/{}/{}] going to process.",
@@ -246,7 +250,11 @@ where
 
 			if let Ok(prev) = self.chain().get_previous_header(&cb.header) {
 				if block
-					.validate(&prev.total_kernel_offset, self.verifier_cache.clone())
+					.validate(
+						&prev.total_kernel_offset,
+						self.verifier_cache.clone(),
+						utxo_data,
+					)
 					.is_ok()
 				{
 					debug!(
@@ -749,7 +757,7 @@ where
 	where
 		F: Fn(&p2p::Peer, Hash) -> Result<(), p2p::Error>,
 	{
-		match self.peers().get_connected_peer(peer_info.addr) {
+		match self.peers().get_connected_peer(peer_info.addr.clone()) {
 			None => debug!(
 				"send_tx_request_to_peer: can't send request to peer {:?}, not connected",
 				peer_info.addr
@@ -767,7 +775,7 @@ where
 		F: Fn(&p2p::Peer, Hash) -> Result<(), p2p::Error>,
 	{
 		match self.chain().block_exists(h) {
-			Ok(false) => match self.peers().get_connected_peer(peer_info.addr) {
+			Ok(false) => match self.peers().get_connected_peer(peer_info.addr.clone()) {
 				None => debug!(
 					"send_block_request_to_peer: can't send request to peer {:?}, not connected",
 					peer_info.addr
@@ -1020,17 +1028,23 @@ impl pool::BlockChain for PoolToChainAdapter {
 			.map_err(|_| pool::PoolError::Other("failed to get block_sums".to_string()))
 	}
 
+	fn get_utxo_data(&self) -> Result<Option<Weak<RwLock<UtxoData>>>, pool::PoolError> {
+		self.chain()
+			.get_utxo_data()
+			.map_err(|_| pool::PoolError::Other("failed to retrieve utxo_data".to_string()))
+	}
+
 	fn validate_tx(&self, tx: &Transaction) -> Result<(), pool::PoolError> {
 		self.chain()
 			.validate_tx(tx)
-			.map_err(|_| pool::PoolError::Other("failed to validate tx".to_string()))
+			.map_err(|e| pool::PoolError::Other(format!("failed to validate tx(1): {}", e)))
 	}
 
 	fn validate_inputs(&self, inputs: &Inputs) -> Result<Vec<OutputIdentifier>, pool::PoolError> {
 		self.chain()
 			.validate_inputs(inputs)
 			.map(|outputs| outputs.into_iter().map(|(out, _)| out).collect::<Vec<_>>())
-			.map_err(|_| pool::PoolError::Other("failed to validate tx".to_string()))
+			.map_err(|e| pool::PoolError::Other(format!("failed to validate tx(2): {}", e)))
 	}
 
 	fn verify_coinbase_maturity(&self, inputs: &Inputs) -> Result<(), pool::PoolError> {

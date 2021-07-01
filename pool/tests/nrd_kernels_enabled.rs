@@ -22,6 +22,7 @@ use self::keychain::{ExtKeychain, Keychain};
 use self::util::RwLock;
 use crate::common::*;
 use grin_core as core;
+use grin_core::core::hash::Hashed;
 use grin_keychain as keychain;
 use grin_util as util;
 use std::sync::Arc;
@@ -55,10 +56,15 @@ fn test_nrd_kernels_enabled() {
 
 	// Spend the initial coinbase.
 	let header_1 = chain.get_header_by_height(1).unwrap();
+	let block_1 = chain.get_block(&header_1.hash()).unwrap();
+	let output = block_1.outputs()[0];
+	let index: u64 = chain.get_output_pos(&output.commitment()).unwrap() - 1;
 	let mg = consensus::MILLI_GRIN;
 	let tx = test_transaction_spending_coinbase(
 		&keychain,
 		&header_1,
+		output,
+		index,
 		vec![1 * mg, 2 * mg, 3 * mg, 4 * mg],
 	);
 	add_block(&chain, &[tx], &keychain);
@@ -71,6 +77,7 @@ fn test_nrd_kernels_enabled() {
 			fee: (600_000 as u32).into(),
 			relative_height: NRDRelativeHeight::new(1440).unwrap(),
 		},
+		&chain,
 	);
 
 	let header = chain.head_header().unwrap();

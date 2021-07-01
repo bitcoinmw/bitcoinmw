@@ -31,7 +31,7 @@ use std::sync::Arc;
 fn test_transaction_pool_block_building() -> Result<(), PoolError> {
 	util::init_test_logger();
 	global::set_local_chain_type(global::ChainTypes::AutomatedTesting);
-	global::set_local_accept_fee_base(1);
+	global::set_local_accept_fee_base(0);
 	let keychain: ExtKeychain = Keychain::from_random_seed(false).unwrap();
 
 	let db_root = "target/.block_building";
@@ -49,27 +49,33 @@ fn test_transaction_pool_block_building() -> Result<(), PoolError> {
 		verifier_cache,
 	);
 
-	// mine enough blocks to get past HF4
-	add_some_blocks(&chain, 4 * 3, &keychain);
-
+	add_some_blocks(&chain, 4, &keychain);
 	let header_1 = chain.get_header_by_height(1).unwrap();
+	let block_1 = chain.get_block(&header_1.hash()).unwrap();
+	let output = block_1.outputs()[0];
+	let index: u64 = chain.get_output_pos(&output.commitment()).unwrap() - 1;
 
 	// Now create tx to spend an early coinbase (now matured).
 	// Provides us with some useful outputs to test with.
-	let initial_tx =
-		test_transaction_spending_coinbase(&keychain, &header_1, vec![100, 200, 300, 400]);
+	let initial_tx = test_transaction_spending_coinbase(
+		&keychain,
+		&header_1,
+		output,
+		index,
+		vec![100, 2, 30, 40, 44, 47],
+	);
 
 	// Mine that initial tx so we can spend it with multiple txs.
 	add_block(&chain, &[initial_tx], &keychain);
 
+	// note: these are no longer child txns. For NIT, we can not spend
+	// unconfirmed utxos.
 	let header = chain.head_header().unwrap();
-
-	let root_tx_1 = test_transaction(&keychain, vec![100, 200], vec![240]);
-	let root_tx_2 = test_transaction(&keychain, vec![300], vec![270]);
-	let root_tx_3 = test_transaction(&keychain, vec![400], vec![370]);
-
-	let child_tx_1 = test_transaction(&keychain, vec![240], vec![210]);
-	let child_tx_2 = test_transaction(&keychain, vec![370], vec![320]);
+	let root_tx_1 = test_transaction(&keychain, vec![100, 2], vec![24], &chain);
+	let root_tx_2 = test_transaction(&keychain, vec![30], vec![27], &chain);
+	let root_tx_3 = test_transaction(&keychain, vec![40], vec![37], &chain);
+	let child_tx_1 = test_transaction(&keychain, vec![44], vec![21], &chain);
+	let child_tx_2 = test_transaction(&keychain, vec![47], vec![32], &chain);
 
 	{
 		// Add the three root txs to the pool.
@@ -80,20 +86,18 @@ fn test_transaction_pool_block_building() -> Result<(), PoolError> {
 		// Now add the two child txs to the pool.
 		pool.add_to_pool(test_source(), child_tx_1.clone(), false, &header)?;
 		pool.add_to_pool(test_source(), child_tx_2.clone(), false, &header)?;
-
 		assert_eq!(pool.total_size(), 5);
 	}
 
 	let txs = pool.prepare_mineable_transactions()?;
-
 	add_block(&chain, &txs, &keychain);
 
 	// Get full block from head of the chain (block we just processed).
 	let block = chain.get_block(&chain.head().unwrap().hash()).unwrap();
 
 	// Check the block contains what we expect.
-	assert_eq!(block.inputs().len(), 4);
-	assert_eq!(block.outputs().len(), 4);
+	assert_eq!(block.inputs().len(), 6);
+	assert_eq!(block.outputs().len(), 6);
 	assert_eq!(block.kernels().len(), 6);
 
 	assert!(block.kernels().contains(&root_tx_1.kernels()[0]));

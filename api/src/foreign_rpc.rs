@@ -23,12 +23,12 @@ use crate::pool::{BlockChain, PoolAdapter};
 use crate::rest::ErrorKind;
 use crate::types::{
 	AddressStatus, BlockHeaderPrintable, BlockPrintable, LocatedTxKernel, OutputListing,
-	OutputPrintable, Tip, Version,
+	OutputPrintable, ScanResponse, Tip, Version,
 };
 use crate::util;
 
 /// Public definition used to generate Node jsonrpc api.
-/// * When running `grin` with defaults, the V2 api is available at
+/// * When running `bmw` with defaults, the V2 api is available at
 /// `localhost:3413/v2/foreign`
 /// * The endpoint only supports POST operations, with the json-rpc request as the body
 #[easy_jsonrpc_mw::rpc]
@@ -128,6 +128,40 @@ pub trait ForeignRpc: Sync + Send {
 		hash: Option<String>,
 		commit: Option<String>,
 	) -> Result<BlockHeaderPrintable, ErrorKind>;
+
+	/**
+	Networked version of [Foreign::get_all_kernels](struct.Foreign.html#method.get_all_kernels).
+
+	# Json rpc example
+
+	```
+	# grin_api::doctest_helper_json_rpc_foreign_assert_response!(
+	# r#"
+	{
+		"jsonrpc": "2.0",
+		"method": "get_all_kernels",
+		"params": [0, 0],
+		"id": 1
+	}
+	# "#
+	# ,
+	# r#"
+	{
+		"id": 1,
+		"jsonrpc": "2.0",
+		"result": {
+			"Ok": []
+		}
+	}
+	# "#
+	# );
+	```
+	*/
+	fn get_all_kernels(
+		&self,
+		min_height: u64,
+		max_height: u64,
+	) -> Result<Vec<LocatedTxKernel>, ErrorKind>;
 
 	/**
 	Networked version of [Foreign::get_block](struct.Foreign.html#method.get_block).
@@ -316,6 +350,40 @@ pub trait ForeignRpc: Sync + Send {
 	fn get_tip(&self) -> Result<Tip, ErrorKind>;
 
 	/**
+	Networked version of [Foreign::get_kernels](struct.Foreign.html#method.get_kernels).
+
+	# Json rpc example
+
+	```
+	# grin_api::doctest_helper_json_rpc_foreign_assert_response!(
+	# r#"
+	{
+			"jsonrpc": "2.0",
+			"method": "get_kernels",
+			"params": [["09c868a2fed619580f296e91d2819b6b3ae61ab734bf3d9c3eafa6d9700f00361b"]],
+			"id": 1
+	}
+	# "#
+	# ,
+	# r#"
+	{
+			"id": 1,
+			"jsonrpc": "2.0",
+			"result": {
+					"Ok": {
+			[
+							374557,
+			]
+					}
+			}
+	}
+	# "#
+	# );
+	```
+	 */
+	fn get_kernels(&self, excess: Vec<String>) -> Result<Vec<u64>, ErrorKind>;
+
+	/**
 	Networked version of [Foreign::get_kernel](struct.Foreign.html#method.get_kernel).
 
 	# Json rpc example
@@ -393,6 +461,52 @@ pub trait ForeignRpc: Sync + Send {
 	*/
 
 	fn get_btc_address_status(&self, address: String) -> Result<AddressStatus, ErrorKind>;
+
+	/**
+	Networked version of [Foreign::scan](struct.Foreign.html#method.scan).
+
+	# Json rpc example
+
+	```
+	# grin_api::doctest_helper_json_rpc_foreign_assert_response!(
+	# r#"
+	{
+		"jsonrpc": "2.0",
+		"method": "scan",
+		"params": [[],1,0,[]],
+		"id": 1
+	}
+	# "#
+	# ,
+	# r#"
+	{
+		"id": 1,
+		"jsonrpc": "2.0",
+		"result": {
+			"Ok": {
+				"headers": [
+					[
+						"3e0d959390726260653737cafd4a1935cf37d3ce881b07039265ee29295e9a58",
+						0
+					]
+				],
+				"last_pmmr_index": 0,
+				"outputs": []
+			}
+		}
+	}
+	# "#
+	# );
+	```
+	 */
+
+	fn scan(
+		&self,
+		client_headers: Vec<(String, u64, u64)>,
+		max_outputs: u64,
+		offset_mmr_index: u64,
+		mmr_check: Vec<u64>,
+	) -> Result<ScanResponse, ErrorKind>;
 
 	/**
 	Networked version of [Foreign::get_outputs](struct.Foreign.html#method.get_outputs).
@@ -798,6 +912,15 @@ where
 		}
 		Foreign::get_header(self, height, parsed_hash, commit).map_err(|e| e.kind().clone())
 	}
+
+	fn get_all_kernels(
+		&self,
+		min_height: u64,
+		max_height: u64,
+	) -> Result<Vec<LocatedTxKernel>, ErrorKind> {
+		Foreign::get_all_kernels(self, min_height, max_height).map_err(|e| e.kind().clone())
+	}
+
 	fn get_block(
 		&self,
 		height: Option<u64>,
@@ -823,6 +946,27 @@ where
 
 	fn get_btc_address_status(&self, address: String) -> Result<AddressStatus, ErrorKind> {
 		Foreign::get_btc_address_status(self, address).map_err(|e| e.kind().clone())
+	}
+
+	fn scan(
+		&self,
+		client_headers: Vec<(String, u64, u64)>,
+		max_outputs: u64,
+		offset_mmr_index: u64,
+		mmr_check: Vec<u64>,
+	) -> Result<ScanResponse, ErrorKind> {
+		Foreign::scan(
+			self,
+			client_headers,
+			max_outputs,
+			offset_mmr_index,
+			mmr_check,
+		)
+		.map_err(|e| e.kind().clone())
+	}
+
+	fn get_kernels(&self, excess: Vec<String>) -> Result<Vec<u64>, ErrorKind> {
+		Foreign::get_kernels(self, excess).map_err(|e| e.kind().clone())
 	}
 
 	fn get_kernel(
@@ -896,7 +1040,7 @@ macro_rules! doctest_helper_json_rpc_foreign_assert_response {
 		// create temporary grin server, run jsonrpc request on node api, delete server, return
 		// json response.
 
-			{
+		{
 			/*use grin_servers::test_framework::framework::run_doctest;
 			use grin_util as util;
 			use serde_json;
@@ -930,6 +1074,6 @@ macro_rules! doctest_helper_json_rpc_foreign_assert_response {
 					serde_json::to_string_pretty(&expected_response).unwrap()
 				);
 				}*/
-			}
+		}
 	};
 }

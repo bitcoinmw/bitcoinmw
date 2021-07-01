@@ -32,12 +32,12 @@ use grin_core as core;
 use grin_keychain as keychain;
 use grin_p2p as p2p;
 use grin_pool as pool;
-use grin_store as store;
 use grin_util as util;
 
 pub mod common;
 mod grin;
 mod mining;
+mod tor;
 
 pub use crate::common::stats::{DiffBlock, PeerStats, ServerStats, StratumStats, WorkerStats};
 pub use crate::common::types::{ServerConfig, StratumServerConfig};

@@ -119,16 +119,22 @@ impl PeerStore {
 		Ok(PeerStore { db: db })
 	}
 
+	pub fn do_resize(&self) -> Result<(), Error> {
+		// call batch to trigger resize
+		self.db.batch()?;
+		Ok(())
+	}
+
 	pub fn save_peer(&self, p: &PeerData) -> Result<(), Error> {
 		debug!("save_peer: {:?} marked {:?}", p.addr, p.flags);
 
 		let batch = self.db.batch()?;
-		batch.put_ser(&peer_key(p.addr)[..], p)?;
+		batch.put_ser(&peer_key(p.clone().addr)[..], p)?;
 		batch.commit()
 	}
 
 	pub fn get_peer(&self, peer_addr: PeerAddr) -> Result<PeerData, Error> {
-		option_to_not_found(self.db.get_ser(&peer_key(peer_addr)[..]), || {
+		option_to_not_found(self.db.get_ser(&peer_key(peer_addr.clone())[..]), || {
 			format!("Peer at address: {}", peer_addr)
 		})
 	}
@@ -180,16 +186,16 @@ impl PeerStore {
 	pub fn update_state(&self, peer_addr: PeerAddr, new_state: State) -> Result<(), Error> {
 		let batch = self.db.batch()?;
 
-		let mut peer =
-			option_to_not_found(batch.get_ser::<PeerData>(&peer_key(peer_addr)[..]), || {
-				format!("Peer at address: {}", peer_addr)
-			})?;
+		let mut peer = option_to_not_found(
+			batch.get_ser::<PeerData>(&peer_key(peer_addr.clone())[..]),
+			|| format!("Peer at address: {}", peer_addr),
+		)?;
 		peer.flags = new_state;
 		if new_state == State::Banned {
 			peer.last_banned = Utc::now().timestamp();
 		}
 
-		batch.put_ser(&peer_key(peer_addr)[..], &peer)?;
+		batch.put_ser(&peer_key(peer_addr.clone())[..], &peer)?;
 		batch.commit()
 	}
 

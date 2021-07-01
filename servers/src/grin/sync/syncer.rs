@@ -22,19 +22,31 @@ use crate::core::pow::Difficulty;
 use crate::grin::sync::body_sync::BodySync;
 use crate::grin::sync::header_sync::HeaderSync;
 use crate::grin::sync::state_sync::StateSync;
+use crate::grin::sync::utxo_sync::{UtxoSync, CHUNK_SIZE};
 use crate::p2p;
+use crate::util::RwLock;
 use crate::util::StopState;
+use bmw_utxo::utxo_data::UtxoData;
 
 pub fn run_sync(
 	sync_state: Arc<SyncState>,
 	peers: Arc<p2p::Peers>,
 	chain: Arc<chain::Chain>,
 	stop_state: Arc<StopState>,
+	utxo_data: Arc<RwLock<UtxoData>>,
+	binary_location: String,
 ) -> std::io::Result<std::thread::JoinHandle<()>> {
 	thread::Builder::new()
 		.name("sync".to_string())
 		.spawn(move || {
-			let runner = SyncRunner::new(sync_state, peers, chain, stop_state);
+			let runner = SyncRunner::new(
+				sync_state,
+				peers,
+				chain,
+				stop_state,
+				utxo_data,
+				binary_location,
+			);
 			runner.sync_loop();
 		})
 }
@@ -44,6 +56,8 @@ pub struct SyncRunner {
 	peers: Arc<p2p::Peers>,
 	chain: Arc<chain::Chain>,
 	stop_state: Arc<StopState>,
+	utxo_data: Arc<RwLock<UtxoData>>,
+	binary_location: String,
 }
 
 impl SyncRunner {
@@ -52,12 +66,16 @@ impl SyncRunner {
 		peers: Arc<p2p::Peers>,
 		chain: Arc<chain::Chain>,
 		stop_state: Arc<StopState>,
+		utxo_data: Arc<RwLock<UtxoData>>,
+		binary_location: String,
 	) -> SyncRunner {
 		SyncRunner {
 			sync_state,
 			peers,
 			chain,
 			stop_state,
+			utxo_data,
+			binary_location,
 		}
 	}
 
@@ -127,7 +145,9 @@ impl SyncRunner {
 			error!("wait_for_min_peers failed: {:?}", e);
 		}
 
-		// Our 3 main sync stages
+		// Our 4 main sync stages
+		let mut utxo_sync = UtxoSync::new(self.peers.clone());
+
 		let mut header_sync = HeaderSync::new(
 			self.sync_state.clone(),
 			self.peers.clone(),
@@ -155,6 +175,30 @@ impl SyncRunner {
 			}
 
 			thread::sleep(time::Duration::from_millis(10));
+
+			// first we check if the utxo_data is loaded. Always sync that first
+			{
+				let mut utxo_data = self.utxo_data.write();
+				if !(*utxo_data).is_loaded() {
+					if self.sync_state.status() != SyncStatus::UtxoSync {
+						(*utxo_data).setup_tmp_data(CHUNK_SIZE);
+					}
+					self.sync_state.update(SyncStatus::UtxoSync);
+					let res = utxo_sync.check_run(&mut utxo_data, self.binary_location.clone());
+					if res.is_err() {
+						error!("Utxo Sync check_run generated error: {:?}", res);
+					} else if res.unwrap() {
+						// syncing is complete and file written
+						let res = utxo_data.load_binary(&self.binary_location);
+						if res.is_err() {
+							error!("load binary generated error: {:?}", res);
+							std::process::exit(-1);
+						}
+						self.sync_state.update(SyncStatus::NoSync);
+					}
+					continue;
+				}
+			}
 
 			let currently_syncing = self.sync_state.is_syncing();
 

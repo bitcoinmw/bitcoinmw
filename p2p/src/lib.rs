@@ -41,7 +41,7 @@ mod conn;
 pub mod handshake;
 pub mod msg;
 mod peer;
-mod peers;
+pub mod peers;
 mod protocol;
 mod serv;
 mod store;

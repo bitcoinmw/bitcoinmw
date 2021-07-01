@@ -226,6 +226,7 @@ pub fn verify_partial_sig(
 /// use core::core::{Output, OutputFeatures};
 /// use keychain::{Keychain, ExtKeychain, SwitchCommitmentType};
 /// use std::convert::TryInto;
+/// use util::secp::Signature;
 ///
 /// let secp = Secp256k1::with_caps(ContextFlag::Commit);
 /// let keychain = ExtKeychain::from_random_seed(false).unwrap();
@@ -236,7 +237,10 @@ pub fn verify_partial_sig(
 /// let commit = keychain.commit(value, &key_id, switch).unwrap();
 /// let builder = proof::ProofBuilder::new(&keychain);
 /// let proof = proof::create(&keychain, &builder, value, &key_id, switch, commit, None).unwrap();
-/// let output = Output::new(OutputFeatures::Coinbase, commit, proof);
+/// let skey = SecretKey::from_slice(&keychain.secp(), &[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,],).unwrap();
+/// let nonce = PublicKey::from_secret_key(&keychain.secp(), &skey).unwrap();
+/// let onetime_pubkey = PublicKey::from_secret_key(&keychain.secp(), &skey).unwrap();
+/// let output = Output::new(OutputFeatures::Coinbase, commit, proof, Signature::from_raw_data(&[0; 64]).unwrap(), 0, nonce, onetime_pubkey);
 /// let height = 20;
 /// let over_commit = secp.commit_value(reward(fees, 20)).unwrap();
 /// let out_commit = output.commitment();
@@ -289,6 +293,7 @@ where
 /// use core::core::{Output, OutputFeatures};
 /// use keychain::{Keychain, ExtKeychain, SwitchCommitmentType};
 /// use std::convert::TryInto;
+/// use util::secp::Signature;
 ///
 /// // Create signature
 /// let secp = Secp256k1::with_caps(ContextFlag::Commit);
@@ -300,7 +305,10 @@ where
 /// let commit = keychain.commit(value, &key_id, switch).unwrap();
 /// let builder = proof::ProofBuilder::new(&keychain);
 /// let proof = proof::create(&keychain, &builder, value, &key_id, switch, commit, None).unwrap();
-/// let output = Output::new(OutputFeatures::Coinbase, commit, proof);
+/// let skey = SecretKey::from_slice(&keychain.secp(), &[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,],).unwrap();
+/// let nonce = PublicKey::from_secret_key(&keychain.secp(), &skey).unwrap();
+/// let onetime_pubkey = PublicKey::from_secret_key(&keychain.secp(), &skey).unwrap();
+/// let output = Output::new(OutputFeatures::Coinbase, commit, proof, Signature::from_raw_data(&[0; 64]).unwrap(), 0, nonce, onetime_pubkey);
 /// let height = 20;
 /// let over_commit = secp.commit_value(reward(fees, 1)).unwrap();
 /// let out_commit = output.commitment();

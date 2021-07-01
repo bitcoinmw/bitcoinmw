@@ -22,6 +22,7 @@ use crate::handlers::blocks_api::{BlockHandler, HeaderHandler};
 use crate::handlers::chain_api::{ChainHandler, KernelHandler, OutputHandler};
 use crate::handlers::pool_api::PoolHandler;
 use crate::handlers::transactions_api::TxHashSetHandler;
+use crate::handlers::utils::w;
 use crate::handlers::version_api::VersionHandler;
 use crate::pool::{self, BlockChain, PoolAdapter, PoolEntry};
 use crate::rest::*;
@@ -30,7 +31,8 @@ use crate::types::{
 	OutputPrintable, Tip, Version,
 };
 use crate::util::RwLock;
-use bitcoinmw_loader::loader::UtxoData;
+use crate::ScanResponse;
+use bmw_utxo::utxo_data::UtxoData;
 use std::sync::Weak;
 
 /// Main interface into all node API functions.
@@ -49,7 +51,7 @@ where
 	pub chain: Weak<Chain>,
 	pub tx_pool: Weak<RwLock<pool::TransactionPool<B, P, V>>>,
 	pub sync_state: Weak<SyncState>,
-	pub utxo_data: Weak<UtxoData>,
+	pub utxo_data: Weak<RwLock<UtxoData>>,
 }
 
 impl<B, P, V> Foreign<B, P, V>
@@ -75,7 +77,7 @@ where
 		chain: Weak<Chain>,
 		tx_pool: Weak<RwLock<pool::TransactionPool<B, P, V>>>,
 		sync_state: Weak<SyncState>,
-		utxo_data: Weak<UtxoData>,
+		utxo_data: Weak<RwLock<UtxoData>>,
 	) -> Self {
 		Foreign {
 			chain,
@@ -194,6 +196,55 @@ where
 		chain_handler.get_btc_address_status(address)
 	}
 
+	/// Returns details needed to scan the wallet for new outputs
+	///
+	/// # Returns
+	/// * Result Containing:
+	/// * A [`ScanResponse`](types/struct.ScanResponse.html)
+	/// * or [`Error`](struct.Error.html) if an error is encountered.
+	///
+
+	pub fn scan(
+		&self,
+		client_headers: Vec<(String, u64, u64)>,
+		max_outputs: u64,
+		offset_mmr_index: u64,
+		mmr_check: Vec<u64>,
+	) -> Result<ScanResponse, Error> {
+		let chain_handler = ChainHandler {
+			chain: self.chain.clone(),
+			utxo_data: self.utxo_data.clone(),
+		};
+		chain_handler.scan(
+			client_headers,
+			max_outputs,
+			offset_mmr_index,
+			mmr_check,
+			w(&self.sync_state)?.is_syncing(),
+		)
+	}
+
+	/// Returns a [`u64`] based on the kernel excess for each excess in the Vector.
+	/// The method will start at the block height `max_height` and traverse the kernel MMR backwards,
+	/// until either the kernel is found or block 0 is reached.
+	/// If the kernel is not found, the height of u64::MAX will be returned
+	///
+	/// # Arguments
+	/// * `excess` - the vector of kernel excess to look for.
+	///
+	/// # Returns
+	/// * Result Containing:
+	/// * A [`u64`] height for each input excess.
+	/// * or [`Error`](struct.Error.html) if an error is encountered.
+	///
+
+	pub fn get_kernels(&self, excess: Vec<String>) -> Result<Vec<u64>, Error> {
+		let kernel_handler = KernelHandler {
+			chain: self.chain.clone(),
+		};
+		kernel_handler.get_kernels_v2(excess)
+	}
+
 	/// Returns a [`LocatedTxKernel`](types/struct.LocatedTxKernel.html) based on the kernel excess.
 	/// The `min_height` and `max_height` parameters are both optional.
 	/// If not supplied, `min_height` will be set to 0 and `max_height` will be set to the head of the chain.
@@ -221,6 +272,32 @@ where
 			chain: self.chain.clone(),
 		};
 		kernel_handler.get_kernel_v2(excess, min_height, max_height)
+	}
+
+	/// Returns a List of [`LocatedTxKernel`](types/struct.LocatedTxKernel.html) based on the heights specified.
+	/// The `min_height` and `max_height` parameters are both required.
+	/// The method will start at the block height `max_height` and traverse the kernel MMR,
+	/// and return all kernels between the two heights.
+	///
+	/// # Arguments
+	/// * `min_height` - minimum height to stop the lookup.
+	/// * `max_height` - maximum height to start the lookup.
+	///
+	/// # Returns
+	/// * Result Containing:
+	/// * A Vector of [`LocatedTxKernel`](types/struct.LocatedTxKernel.html)
+	/// * or [`Error`](struct.Error.html) if an error is encountered.
+	///
+
+	pub fn get_all_kernels(
+		&self,
+		min_height: u64,
+		max_height: u64,
+	) -> Result<Vec<LocatedTxKernel>, Error> {
+		let kernel_handler = KernelHandler {
+			chain: self.chain.clone(),
+		};
+		kernel_handler.get_all_kernels(min_height, max_height)
 	}
 
 	/// Retrieves details about specifics outputs. Supports retrieval of multiple outputs in a single request.

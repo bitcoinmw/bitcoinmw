@@ -20,6 +20,8 @@ use crate::msg::{read_message, write_message, Hand, Msg, Shake, Type, USER_AGENT
 use crate::peer::Peer;
 use crate::types::{Capabilities, Direction, Error, P2PConfig, PeerAddr, PeerInfo, PeerLiveInfo};
 use crate::util::RwLock;
+use crate::PeerAddr::Ip;
+use crate::PeerAddr::Onion;
 use rand::{thread_rng, Rng};
 use std::collections::VecDeque;
 use std::net::{SocketAddr, TcpStream};
@@ -65,11 +67,13 @@ pub struct Handshake {
 	config: P2PConfig,
 	protocol_version: ProtocolVersion,
 	tracker: Arc<Tracker>,
+	/// We require an onion address
+	onion_address: String,
 }
 
 impl Handshake {
 	/// Creates a new handshake handler
-	pub fn new(genesis: Hash, config: P2PConfig) -> Handshake {
+	pub fn new(genesis: Hash, config: P2PConfig, onion_address: String) -> Handshake {
 		Handshake {
 			nonces: Arc::new(RwLock::new(VecDeque::with_capacity(NONCES_CAP))),
 			addrs: Arc::new(RwLock::new(VecDeque::with_capacity(ADDRS_CAP))),
@@ -77,6 +81,7 @@ impl Handshake {
 			config,
 			protocol_version: ProtocolVersion::local(),
 			tracker: Arc::new(Tracker::new()),
+			onion_address,
 		}
 	}
 
@@ -98,6 +103,7 @@ impl Handshake {
 		total_difficulty: Difficulty,
 		self_addr: PeerAddr,
 		conn: &mut TcpStream,
+		peer_addr: Option<PeerAddr>,
 	) -> Result<PeerInfo, Error> {
 		// Set explicit timeouts on the tcp stream for hand/shake messages.
 		// Once the peer is up and running we will set new values for these.
@@ -107,10 +113,10 @@ impl Handshake {
 
 		// prepare the first part of the handshake
 		let nonce = self.next_nonce();
-		let peer_addr = match conn.peer_addr() {
-			Ok(pa) => PeerAddr(pa),
+		let peer_addr = peer_addr.unwrap_or(match conn.peer_addr() {
+			Ok(pa) => PeerAddr::Ip(pa),
 			Err(e) => return Err(Error::Connection(e)),
-		};
+		});
 
 		let hand = Hand {
 			version: self.protocol_version,
@@ -119,8 +125,9 @@ impl Handshake {
 			genesis: self.genesis,
 			total_difficulty,
 			sender_addr: self_addr,
-			receiver_addr: peer_addr,
+			receiver_addr: peer_addr.clone(),
 			user_agent: USER_AGENT.to_string(),
+			tor_address: self.onion_address.clone(),
 		};
 
 		// write and read the handshake response
@@ -144,11 +151,12 @@ impl Handshake {
 			version: negotiated_version,
 			live_info: Arc::new(RwLock::new(PeerLiveInfo::new(shake.total_difficulty))),
 			direction: Direction::Outbound,
+			onion_address: shake.onion_address,
 		};
 
 		// If denied then we want to close the connection
 		// (without providing our peer with any details why).
-		if Peer::is_denied(&self.config, peer_info.addr) {
+		if Peer::is_denied(&self.config, peer_info.addr.clone()) {
 			return Err(Error::ConnectionClose);
 		}
 
@@ -161,7 +169,7 @@ impl Handshake {
 			peer_info.capabilities,
 		);
 		// when more than one protocol version is supported, choosing should go here
-		Ok(peer_info)
+		Ok(peer_info.clone())
 	}
 
 	pub fn accept(
@@ -187,7 +195,7 @@ impl Handshake {
 		} else {
 			// check the nonce to see if we are trying to connect to ourselves
 			let nonces = self.nonces.read();
-			let addr = resolve_peer_addr(hand.sender_addr, &conn);
+			let addr = resolve_peer_addr(hand.sender_addr.clone(), &conn);
 			if nonces.contains(&hand.nonce) {
 				// save ip addresses of ourselves
 				let mut addrs = self.addrs.write();
@@ -205,17 +213,18 @@ impl Handshake {
 		let peer_info = PeerInfo {
 			capabilities: hand.capabilities,
 			user_agent: hand.user_agent,
-			addr: resolve_peer_addr(hand.sender_addr, &conn),
+			addr: resolve_peer_addr(hand.sender_addr.clone(), &conn),
 			version: negotiated_version,
 			live_info: Arc::new(RwLock::new(PeerLiveInfo::new(hand.total_difficulty))),
 			direction: Direction::Inbound,
+			onion_address: hand.tor_address,
 		};
 
 		// At this point we know the published ip and port of the peer
 		// so check if we are configured to explicitly allow or deny it.
 		// If denied then we want to close the connection
 		// (without providing our peer with any details why).
-		if Peer::is_denied(&self.config, peer_info.addr) {
+		if Peer::is_denied(&self.config, peer_info.addr.clone()) {
 			return Err(Error::ConnectionClose);
 		}
 
@@ -226,6 +235,7 @@ impl Handshake {
 			genesis: self.genesis,
 			total_difficulty: total_difficulty,
 			user_agent: USER_AGENT.to_string(),
+			onion_address: self.onion_address.clone(),
 		};
 
 		let msg = Msg::new(Type::Shake, shake, negotiated_version)?;
@@ -233,7 +243,7 @@ impl Handshake {
 
 		trace!("Success handshake with {}.", peer_info.addr);
 
-		Ok(peer_info)
+		Ok(peer_info.clone())
 	}
 
 	/// Generate a new random nonce and store it in our ring buffer
@@ -251,10 +261,15 @@ impl Handshake {
 
 /// Resolve the correct peer_addr based on the connection and the advertised port.
 fn resolve_peer_addr(advertised: PeerAddr, conn: &TcpStream) -> PeerAddr {
-	let port = advertised.0.port();
-	if let Ok(addr) = conn.peer_addr() {
-		PeerAddr(SocketAddr::new(addr.ip(), port))
-	} else {
-		advertised
+	match advertised {
+		Ip(socket_addr) => {
+			let port = socket_addr.port();
+			if let Ok(addr) = conn.peer_addr() {
+				PeerAddr::Ip(SocketAddr::new(addr.ip(), port))
+			} else {
+				advertised
+			}
+		}
+		Onion(_) => advertised,
 	}
 }

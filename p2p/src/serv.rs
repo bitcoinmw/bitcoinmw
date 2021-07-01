@@ -12,14 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::fs::File;
-use std::io;
-use std::net::{IpAddr, Shutdown, SocketAddr, SocketAddrV4, TcpListener, TcpStream};
-use std::path::PathBuf;
-use std::sync::Arc;
-use std::thread;
-use std::time::Duration;
-
 use crate::chain;
 use crate::chain::txhashset::BitmapChunk;
 use crate::core::core;
@@ -28,6 +20,7 @@ use crate::core::core::{OutputIdentifier, Segment, SegmentIdentifier, TxKernel};
 use crate::core::global;
 use crate::core::pow::Difficulty;
 use crate::handshake::Handshake;
+use crate::msg::PeerAddrs;
 use crate::peer::Peer;
 use crate::peers::Peers;
 use crate::store::PeerStore;
@@ -37,16 +30,30 @@ use crate::types::{
 };
 use crate::util::secp::pedersen::RangeProof;
 use crate::util::StopState;
+use bmw_utxo::utxo_data::UtxoData;
 use chrono::prelude::{DateTime, Utc};
+use grin_util::RwLock;
+use std::fs::File;
+use std::io;
+use std::net::Ipv4Addr;
+use std::net::{IpAddr, Shutdown, SocketAddr, SocketAddrV4, TcpListener, TcpStream};
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::Weak;
+use std::thread;
+use std::time::Duration;
 
 /// P2P server implementation, handling bootstrapping to find and connect to
 /// peers, receiving connections from other peers and keep track of all of them.
 pub struct Server {
 	pub config: P2PConfig,
+	pub socks_port: u16,
 	capabilities: Capabilities,
 	handshake: Arc<Handshake>,
 	pub peers: Arc<Peers>,
 	stop_state: Arc<StopState>,
+	pub self_onion_address: String,
+	utxo_data: Option<Weak<RwLock<UtxoData>>>,
 }
 
 // TODO TLS
@@ -59,13 +66,26 @@ impl Server {
 		adapter: Arc<dyn ChainAdapter>,
 		genesis: Hash,
 		stop_state: Arc<StopState>,
+		socks_port: u16,
+		onion_address: String,
+		utxo_data: Option<Weak<RwLock<UtxoData>>>,
 	) -> Result<Server, Error> {
+		let peer_store = PeerStore::new(db_root)?;
+		peer_store.do_resize()?;
+		let peers = Arc::new(Peers::new(peer_store, adapter, config.clone()));
 		Ok(Server {
 			config: config.clone(),
 			capabilities,
-			handshake: Arc::new(Handshake::new(genesis, config.clone())),
-			peers: Arc::new(Peers::new(PeerStore::new(db_root)?, adapter, config)),
+			handshake: Arc::new(Handshake::new(
+				genesis,
+				config.clone(),
+				onion_address.clone(),
+			)),
+			peers,
 			stop_state,
+			socks_port,
+			self_onion_address: onion_address,
+			utxo_data,
 		})
 	}
 
@@ -76,7 +96,6 @@ impl Server {
 		let addr = SocketAddr::new(self.config.host, self.config.port);
 		let listener = TcpListener::bind(addr)?;
 		listener.set_nonblocking(true)?;
-
 		let sleep_time = Duration::from_millis(5);
 		loop {
 			// Pause peer ingress connection request. Only for tests.
@@ -95,19 +114,24 @@ impl Server {
 					// we do not want.
 					stream.set_nonblocking(false)?;
 
-					let mut peer_addr = PeerAddr(peer_addr);
+					let mut peer_addr = PeerAddr::Ip(peer_addr);
 
 					// attempt to see if it an ipv4-mapped ipv6
 					// if yes convert to ipv4
-					if peer_addr.0.is_ipv6() {
-						if let IpAddr::V6(ipv6) = peer_addr.0.ip() {
-							if let Some(ipv4) = ipv6.to_ipv4() {
-								peer_addr = PeerAddr(SocketAddr::V4(SocketAddrV4::new(
-									ipv4,
-									peer_addr.0.port(),
-								)))
+					match peer_addr {
+						PeerAddr::Ip(socket_addr) => {
+							if socket_addr.is_ipv6() {
+								if let IpAddr::V6(ipv6) = socket_addr.ip() {
+									if let Some(ipv4) = ipv6.to_ipv4() {
+										peer_addr = PeerAddr::Ip(SocketAddr::V4(SocketAddrV4::new(
+											ipv4,
+											socket_addr.port(),
+										)))
+									}
+								}
 							}
 						}
+						_ => {}
 					}
 
 					if self.check_undesirable(&stream) {
@@ -148,8 +172,11 @@ impl Server {
 			return Err(Error::ConnectionClose);
 		}
 
-		if Peer::is_denied(&self.config, addr) {
-			debug!("connect_peer: peer {} denied, not connecting.", addr);
+		if Peer::is_denied(&self.config, addr.clone()) {
+			debug!(
+				"connect_peer: peer {} denied, not connecting.",
+				addr.clone()
+			);
 			return Err(Error::ConnectionClose);
 		}
 
@@ -157,12 +184,62 @@ impl Server {
 			let hs = self.handshake.clone();
 			let addrs = hs.addrs.read();
 			if addrs.contains(&addr) {
-				debug!("connect: ignore connecting to PeerWithSelf, addr: {}", addr);
+				debug!(
+					"connect: ignore connecting to PeerWithSelf, addr: {}",
+					addr.clone()
+				);
 				return Err(Error::PeerWithSelf);
 			}
 		}
 
-		if let Some(p) = self.peers.get_connected_peer(addr) {
+		// only connect to ip's in our peers preferred list for privacy reasons
+		match addr {
+			PeerAddr::Ip(_) => {
+				let empty_list = &PeerAddrs { peers: vec![] };
+				let peers_preferred = self.config.peers_preferred.as_ref().unwrap_or(empty_list);
+
+				let mut found = false;
+
+				// iterate through peers_preferred
+				for peer in &peers_preferred.peers {
+					if peer.eq(&addr.clone()) {
+						found = true;
+						break;
+					}
+				}
+
+				let seeds = self.config.seeds.as_ref().unwrap_or(empty_list);
+
+				// iterate through seeds
+				if !found {
+					for peer in &seeds.peers {
+						if peer.eq(&addr.clone()) {
+							found = true;
+							break;
+						}
+					}
+				}
+
+				let allow = self.config.peers_allow.as_ref().unwrap_or(empty_list);
+
+				// iterate through peers_allow
+				if !found {
+					for peer in &allow.peers {
+						if peer.eq(&addr.clone()) {
+							found = true;
+							break;
+						}
+					}
+				}
+
+				if !found {
+					return Err(Error::IpPeerNotAuthorized);
+				}
+			}
+			PeerAddr::Onion(_) => {}
+		}
+
+		if let Some(p) = self.peers.get_connected_peer(addr.clone()) {
 			// if we're already connected to the addr, just return the peer
 			trace!("connect_peer: already connected {}", addr);
 			return Ok(p);
@@ -174,18 +251,63 @@ impl Server {
 			self.config.port,
 			addr
 		);
-		match TcpStream::connect_timeout(&addr.0, Duration::from_secs(10)) {
+
+		let peer_addr;
+		let self_addr;
+
+		let stream = match addr.clone() {
+			PeerAddr::Ip(address) => {
+				// we do this, not a good solution, but for now, we'll use it. Other side usually detects with ip.
+				self_addr = PeerAddr::Ip(SocketAddr::new(self.config.host, self.config.port));
+				// we don't use the socks5 proxy for Ips. Ips can only show up in configuration file via
+				// peers preferred, allowed and seeds and it's intended for miners who want low
+				// latency direct connections, so socks5 is not used here.
+				peer_addr = Some(PeerAddr::Ip(address));
+				TcpStream::connect_timeout(&address, Duration::from_secs(10))?
+			}
+			PeerAddr::Onion(onion_address) => {
+				if self.socks_port != 0 {
+					self_addr = PeerAddr::Onion(self.self_onion_address.clone());
+					peer_addr = Some(PeerAddr::Onion(onion_address.clone()));
+					let proxy_addr =
+						SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), self.socks_port);
+					let onion_target: socks::TargetAddr =
+						socks::TargetAddr::Domain(onion_address, 80);
+					let socks5_stream_ref =
+						tor_stream::TorStream::connect_with_address(proxy_addr, onion_target);
+					match socks5_stream_ref {
+						Ok(socks5_stream) => socks5_stream.unwrap(),
+						Err(e) => {
+							return Err(Error::Connection(e));
+						}
+					}
+				} else {
+					// can't connect to this because we don't have a socks proxy.
+					return Err(Error::ConnectionClose);
+				}
+			}
+		};
+
+		match Ok(stream) {
 			Ok(stream) => {
-				let addr = SocketAddr::new(self.config.host, self.config.port);
 				let total_diff = self.peers.total_difficulty()?;
+
+				let utxo_data = self
+					.utxo_data
+					.as_ref()
+					.ok_or(Error::Internal)?
+					.upgrade()
+					.ok_or(Error::Internal)?;
 
 				let peer = Peer::connect(
 					stream,
 					self.capabilities,
 					total_diff,
-					PeerAddr(addr),
+					self_addr,
 					&self.handshake,
 					self.peers.clone(),
+					peer_addr,
+					Some(Arc::downgrade(&utxo_data)),
 				)?;
 				let peer = Arc::new(peer);
 				self.peers.add_connected(peer.clone())?;
@@ -210,6 +332,18 @@ impl Server {
 		}
 		let total_diff = self.peers.total_difficulty()?;
 
+		let utxo_data = if self.utxo_data.is_none() {
+			None
+		} else {
+			let utxo_data = self
+				.utxo_data
+				.as_ref()
+				.ok_or(Error::Internal)?
+				.upgrade()
+				.ok_or(Error::Internal)?;
+			Some(Arc::downgrade(&utxo_data))
+		};
+
 		// accept the peer and add it to the server map
 		let peer = Peer::accept(
 			stream,
@@ -217,6 +351,7 @@ impl Server {
 			total_diff,
 			&self.handshake,
 			self.peers.clone(),
+			utxo_data,
 		)?;
 		self.peers.add_connected(Arc::new(peer))?;
 		Ok(())
@@ -243,14 +378,14 @@ impl Server {
 			return true;
 		}
 		if let Ok(peer_addr) = stream.peer_addr() {
-			let peer_addr = PeerAddr(peer_addr);
-			if self.peers.is_banned(peer_addr) {
+			let peer_addr = PeerAddr::Ip(peer_addr);
+			if self.peers.is_banned(peer_addr.clone()) {
 				debug!("Peer {} banned, refusing connection.", peer_addr);
 				return true;
 			}
 			// The call to is_known() can fail due to contention on the peers map.
 			// If it fails we want to default to refusing the connection.
-			match self.peers.is_known(peer_addr) {
+			match self.peers.is_known(peer_addr.clone()) {
 				Ok(true) => {
 					debug!("Peer {} already known, refusing connection.", peer_addr);
 					return true;

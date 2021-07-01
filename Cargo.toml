@@ -1,23 +1,23 @@
 [package]
-name = "grin"
-version = "5.1.0-alpha.1"
-authors = ["Grin Developers <mimblewimble@lists.launchpad.net>"]
-description = "Simple, private and scalable cryptocurrency implementation based on the Mimblewimble chain format."
+name = "bmw"
+version = "0.0.1"
+authors = ["BitcoinMW Developers <bitcoinmw@protonmail.com>"]
+description = "Simple, private and scalable cryptocurrency implementation based on the Mimblewimble chain format with installation of the Bitcoin UTXO set."
 license = "Apache-2.0"
-repository = "https://github.com/mimblewimble/grin"
-keywords = [ "crypto", "bmw", "mimblewimble" ]
+repository = "https://github.com/bitcoinmw/bitcoinmw"
+keywords = [ "crypto", "bitcoinmw", "mimblewimble" ]
 readme = "README.md"
-exclude = ["**/*.grin", "**/*.grin2"]
+exclude = ["**/*.bmw", "**/*.bmw"]
 build = "src/build/build.rs"
 edition = "2018"
 
 [workspace]
 members = ["api", "chain", "config", "core", "keychain", "p2p", "servers", "store", "util", "pool", "utxo"]
-exclude = ["etc/gen_gen", "etc/build_btc_utxo_log", "etc/build_btc_utxo_bin"]
+exclude = ["etc/gen_gen", "etc/gen_log", "etc/gen_bin", "etc/perf", "etc/analysis"]
 
 [[bin]]
 name = "bmw"
-path = "src/bin/grin.rs"
+path = "src/bin/bmw.rs"
 
 [dependencies]
 blake2-rfc = "0.2"
@@ -32,15 +32,15 @@ term = "0.6"
 failure = "0.1"
 failure_derive = "0.1"
 
-grin_api = { path = "./api", version = "5.1.0-alpha.1" }
-grin_config = { path = "./config", version = "5.1.0-alpha.1" }
-grin_chain = { path = "./chain", version = "5.1.0-alpha.1" }
-grin_core = { path = "./core", version = "5.1.0-alpha.1" }
-grin_keychain = { path = "./keychain", version = "5.1.0-alpha.1" }
-grin_p2p = { path = "./p2p", version = "5.1.0-alpha.1" }
-grin_servers = { path = "./servers", version = "5.1.0-alpha.1" }
-grin_util = { path = "./util", version = "5.1.0-alpha.1" }
-bitcoinmw_loader = { path = "./utxo", version = "5.1.0-alpha.1" }
+grin_api = { path = "./api", version = "0.0.1" }
+grin_config = { path = "./config", version = "0.0.1" }
+grin_chain = { path = "./chain", version = "0.0.1" }
+grin_core = { path = "./core", version = "0.0.1" }
+grin_keychain = { path = "./keychain", version = "0.0.1" }
+grin_p2p = { path = "./p2p", version = "0.0.1" }
+grin_servers = { path = "./servers", version = "0.0.1" }
+grin_util = { path = "./util", version = "0.0.1" }
+bmw_utxo = { path = "./utxo", version = "0.0.1" }
 
 
 [dependencies.cursive]
@@ -52,5 +52,5 @@ features = ["pancurses-backend"]
 built = { version = "0.4", features = ["git2"]}
 
 [dev-dependencies]
-grin_chain = { path = "./chain", version = "5.1.0-alpha.1" }
-grin_store = { path = "./store", version = "5.1.0-alpha.1" }
+grin_chain = { path = "./chain", version = "0.0.1" }
+grin_store = { path = "./store", version = "0.0.1" }

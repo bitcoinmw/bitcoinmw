@@ -15,22 +15,27 @@
 use crate::chain;
 use crate::conn::MessageHandler;
 use crate::core::core::{hash::Hashed, CompactBlock};
+use crate::msg::BtcUtxoSetResponse;
 
 use crate::msg::{
 	Consumed, Headers, Message, Msg, OutputBitmapSegmentResponse, OutputSegmentResponse, PeerAddrs,
 	Pong, SegmentRequest, SegmentResponse, TxHashSetArchive, Type,
 };
 use crate::types::{AttachmentMeta, Error, NetAdapter, PeerInfo};
+use bmw_utxo::utxo_data::UtxoData;
 use chrono::prelude::Utc;
+use grin_util::RwLock;
 use rand::{thread_rng, Rng};
 use std::fs::{self, File};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::Weak;
 
 pub struct Protocol {
 	adapter: Arc<dyn NetAdapter>,
 	peer_info: PeerInfo,
 	state_sync_requested: Arc<AtomicBool>,
+	utxo_data: Option<Weak<RwLock<UtxoData>>>,
 }
 
 impl Protocol {
@@ -38,11 +43,13 @@ impl Protocol {
 		adapter: Arc<dyn NetAdapter>,
 		peer_info: PeerInfo,
 		state_sync_requested: Arc<AtomicBool>,
+		utxo_data: Option<Weak<RwLock<UtxoData>>>,
 	) -> Protocol {
 		Protocol {
 			adapter,
 			peer_info,
 			state_sync_requested,
+			utxo_data,
 		}
 	}
 }
@@ -54,7 +61,7 @@ impl MessageHandler for Protocol {
 		// If we received a msg from a banned peer then log and drop it.
 		// If we are getting a lot of these then maybe we are not cleaning
 		// banned peers up correctly?
-		if adapter.is_banned(self.peer_info.addr) {
+		if adapter.is_banned(self.peer_info.addr.clone()) {
 			debug!(
 				"handler: consume: peer {:?} banned, received: {}, dropping.",
 				self.peer_info.addr, message,
@@ -96,7 +103,11 @@ impl MessageHandler for Protocol {
 			}
 
 			Message::Ping(ping) => {
-				adapter.peer_difficulty(self.peer_info.addr, ping.total_difficulty, ping.height);
+				adapter.peer_difficulty(
+					self.peer_info.addr.clone(),
+					ping.total_difficulty,
+					ping.height,
+				);
 				Consumed::Response(Msg::new(
 					Type::Pong,
 					Pong {
@@ -108,7 +119,11 @@ impl MessageHandler for Protocol {
 			}
 
 			Message::Pong(pong) => {
-				adapter.peer_difficulty(self.peer_info.addr, pong.total_difficulty, pong.height);
+				adapter.peer_difficulty(
+					self.peer_info.addr.clone(),
+					pong.total_difficulty,
+					pong.height,
+				);
 				Consumed::None
 			}
 
@@ -156,12 +171,32 @@ impl MessageHandler for Protocol {
 			}
 
 			Message::Block(b) => {
-				debug!("handle_payload: received block");
 				// We default to NONE opts here as we do not know know yet why this block was
 				// received.
 				// If we requested this block from a peer due to our node syncing then
 				// the peer adapter will override opts to reflect this.
-				adapter.block_received(b.into(), &self.peer_info, chain::Options::NONE)?;
+				debug!("handle_payload: received block");
+
+				// we shouldn't receive blocks if our utxo data is not received. Stop here if that's
+				// the case.
+				if self.utxo_data.is_none() {
+					// for testing purposes we continue here
+					adapter.block_received(b.into(), &self.peer_info, chain::Options::NONE)?;
+				} else {
+					let utxo_data = self
+						.utxo_data
+						.as_ref()
+						.ok_or(Error::Internal)?
+						.upgrade()
+						.ok_or(Error::Internal)?;
+					let utxo_data_loaded = {
+						let utxo_data = utxo_data.read();
+						utxo_data.is_loaded()
+					};
+					if utxo_data_loaded {
+						adapter.block_received(b.into(), &self.peer_info, chain::Options::NONE)?;
+					}
+				}
 				Consumed::None
 			}
 
@@ -176,7 +211,27 @@ impl MessageHandler for Protocol {
 
 			Message::CompactBlock(b) => {
 				debug!("handle_payload: received compact block");
-				adapter.compact_block_received(b.into(), &self.peer_info)?;
+
+				// we shouldn't receive blocks if our utxo data is not received. Stop here if that's
+				// the case.
+				if self.utxo_data.is_none() {
+					// for testing purposes we continue here
+					adapter.compact_block_received(b.into(), &self.peer_info)?;
+				} else {
+					let utxo_data = self
+						.utxo_data
+						.as_ref()
+						.ok_or(Error::Internal)?
+						.upgrade()
+						.ok_or(Error::Internal)?;
+					let utxo_data_loaded = {
+						let utxo_data = utxo_data.read();
+						utxo_data.is_loaded()
+					};
+					if utxo_data_loaded {
+						adapter.compact_block_received(b.into(), &self.peer_info)?;
+					}
+				}
 				Consumed::None
 			}
 
@@ -370,6 +425,63 @@ impl MessageHandler for Protocol {
 				} else {
 					Consumed::None
 				}
+			}
+			Message::GetBtcUtxoSetChunk(req) => {
+				info!("utxoset request, req = {:?}", req);
+				let utxo_data = self
+					.utxo_data
+					.as_ref()
+					.ok_or(Error::Internal)?
+					.upgrade()
+					.ok_or(Error::Internal)?;
+				let utxo_data_loaded = {
+					let utxo_data = utxo_data.read();
+					utxo_data.is_loaded()
+				};
+				if !utxo_data_loaded {
+					Consumed::None
+				} else {
+					let data = {
+						let utxo_data = utxo_data.read();
+						utxo_data.get_chunk(req.index, req.part, req.chunk_size)
+					};
+
+					let response = BtcUtxoSetResponse {
+						index: req.index,
+						part: req.part,
+						chunk_size: req.chunk_size,
+						data,
+					};
+					let res = Consumed::Response(Msg::new(
+						Type::BtcUtxoSetChunk,
+						response,
+						self.peer_info.version,
+					)?);
+					res
+				}
+			}
+			Message::BtcUtxoSetChunk(resp) => {
+				info!(
+					"utxoset resp.len() = {:?} [index={},part={}] from peer = {:?}",
+					resp.data.len(),
+					resp.index,
+					resp.part,
+					self.peer_info.addr,
+				);
+				let utxo_data = self
+					.utxo_data
+					.as_ref()
+					.ok_or(Error::Internal)?
+					.upgrade()
+					.ok_or(Error::Internal)?;
+				let mut utxo_data = utxo_data.write();
+				utxo_data.add_part(
+					resp.data,
+					resp.index,
+					resp.part,
+					format!("{:?}", self.peer_info.addr),
+				)?;
+				Consumed::None
 			}
 			Message::OutputBitmapSegment(_)
 			| Message::OutputSegment(_)

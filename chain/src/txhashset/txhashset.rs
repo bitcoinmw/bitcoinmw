@@ -32,13 +32,18 @@ use crate::txhashset::bitmap_accumulator::{BitmapAccumulator, BitmapChunk};
 use crate::txhashset::{RewindableKernelView, UTXOView};
 use crate::types::{CommitPos, OutputRoots, Tip, TxHashSetRoots, TxHashsetWriteStatus};
 use crate::util::secp::pedersen::{Commitment, RangeProof};
+use crate::util::RwLock;
 use crate::util::{file, secp_static, zip};
+use bmw_utxo::utxo_data::UtxoData;
 use croaring::Bitmap;
+use grin_core::core::verifier_cache::VerifierCache;
 use grin_store;
 use grin_store::pmmr::{clean_files_by_prefix, PMMRBackend};
+use std::collections::HashMap;
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::Weak;
 use std::time::Instant;
 
 const TXHASHSET_SUBDIR: &str = "txhashset";
@@ -361,6 +366,34 @@ impl TxHashSet {
 			.elements_from_pmmr_index(start_index, max_count, max_index)
 	}
 
+	/// Find index of kernels in the Vector, if not found, return u64::MAX
+	pub fn find_kernels(&self, excess: Vec<Commitment>) -> Vec<u64> {
+		let pmmr = ReadonlyPMMR::at(&self.kernel_pmmr_h.backend, self.kernel_pmmr_h.last_pos);
+		let mut index = self.kernel_pmmr_h.last_pos + 1;
+		let mut map = HashMap::new();
+		while index > 0 {
+			index -= 1;
+			if index == 0 {
+				break;
+			}
+			if let Some(kernel) = pmmr.get_data(index) {
+				for ex in &excess {
+					if kernel.excess == *ex {
+						map.insert(ex, index);
+					}
+				}
+			}
+		}
+		let mut ret = vec![];
+		for ex in &excess {
+			match map.get(ex) {
+				Some(index) => ret.push(*index),
+				None => ret.push(u64::MAX),
+			}
+		}
+		ret
+	}
+
 	/// Find a kernel with a given excess. Work backwards from `max_index` to `min_index`
 	pub fn find_kernel(
 		&self,
@@ -625,6 +658,7 @@ impl TxHashSet {
 pub fn extending_readonly<F, T>(
 	handle: &mut PMMRHandle<BlockHeader>,
 	trees: &mut TxHashSet,
+	utxo_data: Option<Weak<RwLock<UtxoData>>>,
 	inner: F,
 ) -> Result<T, Error>
 where
@@ -641,7 +675,7 @@ where
 	let res = {
 		let header_pmmr = PMMR::at(&mut handle.backend, handle.last_pos);
 		let mut header_extension = HeaderExtension::new(header_pmmr, header_head);
-		let mut extension = Extension::new(trees, head);
+		let mut extension = Extension::new(trees, head, utxo_data);
 		let mut extension_pair = ExtensionPair {
 			header_extension: &mut header_extension,
 			extension: &mut extension,
@@ -724,10 +758,16 @@ pub fn extending<'a, F, T>(
 	header_pmmr: &'a mut PMMRHandle<BlockHeader>,
 	trees: &'a mut TxHashSet,
 	batch: &'a mut Batch<'_>,
+	utxo_data: Option<Weak<RwLock<UtxoData>>>,
+	verifier: Arc<RwLock<dyn VerifierCache>>,
 	inner: F,
 ) -> Result<T, Error>
 where
-	F: FnOnce(&mut ExtensionPair<'_>, &Batch<'_>) -> Result<T, Error>,
+	F: FnOnce(
+		&mut ExtensionPair<'_>,
+		Arc<RwLock<dyn VerifierCache>>,
+		&Batch<'_>,
+	) -> Result<T, Error>,
 {
 	let sizes: (u64, u64, u64);
 	let res: Result<T, Error>;
@@ -745,12 +785,12 @@ where
 
 		let header_pmmr = PMMR::at(&mut header_pmmr.backend, header_pmmr.last_pos);
 		let mut header_extension = HeaderExtension::new(header_pmmr, header_head);
-		let mut extension = Extension::new(trees, head);
+		let mut extension = Extension::new(trees, head, utxo_data);
 		let mut extension_pair = ExtensionPair {
 			header_extension: &mut header_extension,
 			extension: &mut extension,
 		};
-		res = inner(&mut extension_pair, &child_batch);
+		res = inner(&mut extension_pair, verifier, &child_batch);
 
 		rollback = extension_pair.extension.rollback;
 		sizes = extension_pair.extension.sizes();
@@ -1034,6 +1074,8 @@ pub struct Extension<'a> {
 
 	/// Rollback flag.
 	rollback: bool,
+	/// UtxoData for validating btc kernels
+	utxo_data: Option<Weak<RwLock<UtxoData>>>,
 }
 
 impl<'a> Committed for Extension<'a> {
@@ -1065,7 +1107,11 @@ impl<'a> Committed for Extension<'a> {
 }
 
 impl<'a> Extension<'a> {
-	fn new(trees: &'a mut TxHashSet, head: Tip) -> Extension<'a> {
+	fn new(
+		trees: &'a mut TxHashSet,
+		head: Tip,
+		utxo_data: Option<Weak<RwLock<UtxoData>>>,
+	) -> Extension<'a> {
 		Extension {
 			head,
 			output_pmmr: PMMR::at(
@@ -1082,6 +1128,7 @@ impl<'a> Extension<'a> {
 			),
 			bitmap_accumulator: trees.bitmap_accumulator.clone(),
 			rollback: false,
+			utxo_data,
 		}
 	}
 
@@ -1574,6 +1621,8 @@ impl<'a> Extension<'a> {
 			// Verify the rangeproof associated with each unspent output.
 			self.verify_rangeproofs(status)?;
 
+			self.verify_r_signatures(status)?;
+
 			// Verify all the kernel signatures.
 			self.verify_kernel_signatures(status)?;
 		}
@@ -1618,6 +1667,48 @@ impl<'a> Extension<'a> {
 		)
 	}
 
+	fn verify_r_signatures(&self, status: &dyn TxHashsetWriteStatus) -> Result<(), Error> {
+		let now = Instant::now();
+		const R_SIG_BATCH_SIZE: usize = 5_000;
+
+		let mut r_sig_count = 0;
+		let total_r_sigs = pmmr::n_leaves(self.output_pmmr.unpruned_size());
+		let mut ids: Vec<OutputIdentifier> = Vec::with_capacity(R_SIG_BATCH_SIZE);
+		for n in 1..self.output_pmmr.unpruned_size() + 1 {
+			if pmmr::is_leaf(n) {
+				let data = self.output_pmmr.get_data(n);
+				// note: if data is not "some", it just
+				// means that the output has been pruned
+				// we only check the outputs that haven't been
+				// pruned
+				if data.is_some() {
+					let id = data.unwrap();
+					ids.push(id);
+				}
+			}
+
+			if ids.len() >= R_SIG_BATCH_SIZE || n >= self.output_pmmr.unpruned_size() {
+				OutputIdentifier::batch_sig_verify(&ids)?;
+				r_sig_count += ids.len() as u64;
+				ids.clear();
+				status.on_validation_rsigs(r_sig_count, total_r_sigs);
+				debug!(
+					"txhashset: verify_r_signatures: verified {} signatures",
+					r_sig_count,
+				);
+			}
+		}
+
+		debug!(
+			"txhashset: verified {} R signatures, pmmr size {}, took {}s",
+			r_sig_count,
+			self.output_pmmr.unpruned_size(),
+			now.elapsed().as_secs(),
+		);
+
+		Ok(())
+	}
+
 	fn verify_kernel_signatures(&self, status: &dyn TxHashsetWriteStatus) -> Result<(), Error> {
 		let now = Instant::now();
 		const KERNEL_BATCH_SIZE: usize = 5_000;
@@ -1631,6 +1722,8 @@ impl<'a> Extension<'a> {
 					.kernel_pmmr
 					.get_data(n)
 					.ok_or_else(|| ErrorKind::TxKernelNotFound)?;
+				// if it's a btc claim we validate it
+				kernel.validate_btcclaim(self.utxo_data.clone())?;
 				tx_kernels.push(kernel);
 			}
 

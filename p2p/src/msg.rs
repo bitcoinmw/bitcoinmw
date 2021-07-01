@@ -32,6 +32,7 @@ use crate::types::{
 	MAX_BLOCK_HEADERS, MAX_LOCATORS, MAX_PEER_ADDRS,
 };
 use crate::util::secp::pedersen::RangeProof;
+use bmw_utxo::utxo_constants::CHUNK_SIZE;
 use bytes::Bytes;
 use num::FromPrimitive;
 use std::fmt;
@@ -40,7 +41,7 @@ use std::io::{Read, Write};
 use std::sync::Arc;
 
 /// Grin's user agent with current version
-pub const USER_AGENT: &str = concat!("MW/Grin ", env!("CARGO_PKG_VERSION"));
+pub const USER_AGENT: &str = concat!("MW/BMW ", env!("CARGO_PKG_VERSION"));
 
 /// Magic numbers expected in the header of every message
 const OTHER_MAGIC: [u8; 2] = [79, 49];
@@ -82,6 +83,8 @@ enum_from_primitive! {
 		RangeProofSegment = 26,
 		GetKernelSegment = 27,
 		KernelSegment = 28,
+		GetBtcUtxoSetChunk = 29,
+		BtcUtxoSetChunk = 30,
 	}
 }
 
@@ -127,6 +130,8 @@ fn max_msg_size(msg_type: Type) -> u64 {
 		Type::RangeProofSegment => 2 * max_block_size(),
 		Type::GetKernelSegment => 41,
 		Type::KernelSegment => 2 * max_block_size(),
+		Type::GetBtcUtxoSetChunk => 2,
+		Type::BtcUtxoSetChunk => CHUNK_SIZE.into(),
 	}
 }
 
@@ -376,6 +381,8 @@ pub struct Hand {
 	pub receiver_addr: PeerAddr,
 	/// name of version of the software
 	pub user_agent: String,
+	/// tor address
+	pub tor_address: String,
 }
 
 impl Writeable for Hand {
@@ -391,6 +398,7 @@ impl Writeable for Hand {
 		self.receiver_addr.write(writer)?;
 		writer.write_bytes(&self.user_agent)?;
 		self.genesis.write(writer)?;
+		writer.write_bytes(&self.tor_address)?;
 		Ok(())
 	}
 }
@@ -406,6 +414,8 @@ impl Readable for Hand {
 		let ua = reader.read_bytes_len_prefix()?;
 		let user_agent = String::from_utf8(ua).map_err(|_| ser::Error::CorruptedData)?;
 		let genesis = Hash::read(reader)?;
+		let tor_address = reader.read_bytes_len_prefix()?;
+		let tor_address = String::from_utf8(tor_address).map_err(|_| ser::Error::CorruptedData)?;
 		Ok(Hand {
 			version,
 			capabilities,
@@ -415,6 +425,7 @@ impl Readable for Hand {
 			sender_addr,
 			receiver_addr,
 			user_agent,
+			tor_address,
 		})
 	}
 }
@@ -433,6 +444,8 @@ pub struct Shake {
 	pub total_difficulty: Difficulty,
 	/// name of version of the software
 	pub user_agent: String,
+	/// onion address
+	pub onion_address: String,
 }
 
 impl Writeable for Shake {
@@ -442,6 +455,7 @@ impl Writeable for Shake {
 		self.total_difficulty.write(writer)?;
 		writer.write_bytes(&self.user_agent)?;
 		self.genesis.write(writer)?;
+		writer.write_bytes(&self.onion_address)?;
 		Ok(())
 	}
 }
@@ -455,12 +469,15 @@ impl Readable for Shake {
 		let ua = reader.read_bytes_len_prefix()?;
 		let user_agent = String::from_utf8(ua).map_err(|_| ser::Error::CorruptedData)?;
 		let genesis = Hash::read(reader)?;
+		let oa = reader.read_bytes_len_prefix()?;
+		let onion_address = String::from_utf8(oa).map_err(|_| ser::Error::CorruptedData)?;
 		Ok(Shake {
 			version,
 			capabilities,
 			genesis,
 			total_difficulty,
 			user_agent,
+			onion_address,
 		})
 	}
 }
@@ -730,6 +747,79 @@ impl Readable for TxHashSetArchive {
 	}
 }
 
+/// Struct for getting the BTC Utxo Set
+#[derive(Debug)]
+pub struct BtcUtxoSetRequest {
+	/// The index (16 * 1024 * 1024 byte subsection of the gen_bin.bin file)
+	pub index: u8,
+	/// The part number (offset within this 16 mb chunk)
+	pub part: u16,
+	/// Chunk size (size of each part of this chunk)
+	pub chunk_size: u32,
+}
+
+impl Readable for BtcUtxoSetRequest {
+	fn read<R: Reader>(reader: &mut R) -> Result<Self, ser::Error> {
+		let index = Readable::read(reader)?;
+		let part = Readable::read(reader)?;
+		let chunk_size = Readable::read(reader)?;
+		Ok(Self {
+			index,
+			part,
+			chunk_size,
+		})
+	}
+}
+
+impl Writeable for BtcUtxoSetRequest {
+	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), ser::Error> {
+		Writeable::write(&self.index, writer)?;
+		Writeable::write(&self.part, writer)?;
+		Writeable::write(&self.chunk_size, writer)
+	}
+}
+
+/// Struct used as the response to a BtcUtxoSetRequest
+#[derive(Debug)]
+pub struct BtcUtxoSetResponse {
+	/// The index (16 * 1024 * 1024 byte subsection of the gen_bin.bin file)
+	pub index: u8,
+	/// The part number (offset within this 16 mb chunk)
+	pub part: u16,
+	/// Chunk size (size of each part of this chunk)
+	pub chunk_size: u32,
+	/// Data
+	pub data: Vec<u8>,
+}
+
+impl Readable for BtcUtxoSetResponse {
+	fn read<R: Reader>(reader: &mut R) -> Result<Self, ser::Error> {
+		let index = Readable::read(reader)?;
+		let part = Readable::read(reader)?;
+		let chunk_size = Readable::read(reader)?;
+		let mut data = Vec::new();
+		for _ in 0..chunk_size {
+			let x: u8 = Readable::read(reader)?;
+			data.push(x);
+		}
+		Ok(Self {
+			index,
+			part,
+			chunk_size,
+			data,
+		})
+	}
+}
+
+impl Writeable for BtcUtxoSetResponse {
+	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), ser::Error> {
+		Writeable::write(&self.index, writer)?;
+		Writeable::write(&self.part, writer)?;
+		Writeable::write(&self.chunk_size, writer)?;
+		Writeable::write(&self.data, writer)
+	}
+}
+
 /// Request to get a segment of a (P)MMR at a particular block.
 pub struct SegmentRequest {
 	/// The hash of the block the MMR is associated with
@@ -868,6 +958,8 @@ pub enum Message {
 	RangeProofSegment(SegmentResponse<RangeProof>),
 	GetKernelSegment(SegmentRequest),
 	KernelSegment(SegmentResponse<TxKernel>),
+	GetBtcUtxoSetChunk(BtcUtxoSetRequest),
+	BtcUtxoSetChunk(BtcUtxoSetResponse),
 }
 
 impl fmt::Display for Message {
@@ -901,6 +993,8 @@ impl fmt::Display for Message {
 			Message::RangeProofSegment(_) => write!(f, "range proof segment"),
 			Message::GetKernelSegment(_) => write!(f, "get kernel segment"),
 			Message::KernelSegment(_) => write!(f, "kernel segment"),
+			Message::GetBtcUtxoSetChunk(_) => write!(f, "get utxoset"),
+			Message::BtcUtxoSetChunk(_) => write!(f, "utxoset"),
 		}
 	}
 }

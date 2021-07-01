@@ -19,6 +19,7 @@ use crate::core::committed::{self, Committed};
 use crate::core::compact_block::CompactBlock;
 use crate::core::hash::{DefaultHashable, Hash, Hashed, ZERO_HASH};
 use crate::core::verifier_cache::VerifierCache;
+use crate::core::CommitWrapper;
 use crate::core::{
 	pmmr, transaction, Commitment, Inputs, KernelFeatures, Output, Transaction, TransactionBody,
 	TxKernel, Weighting,
@@ -28,13 +29,14 @@ use crate::pow::{verify_size, Difficulty, Proof, ProofOfWork};
 use crate::ser::{
 	self, deserialize_default, serialize_default, PMMRable, Readable, Reader, Writeable, Writer,
 };
+use bmw_utxo::utxo_data::UtxoData;
 use chrono::naive::{MAX_DATE, MIN_DATE};
 use chrono::prelude::{DateTime, NaiveDateTime, Utc};
 use chrono::Duration;
 use keychain::{self, BlindingFactor};
 use std::convert::TryInto;
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use util::from_hex;
 use util::RwLock;
 use util::{secp, static_secp_instance};
@@ -63,6 +65,8 @@ pub enum Error {
 	NRDKernelPreHF3,
 	/// NRD kernels are not valid if disabled locally via "feature flag".
 	NRDKernelNotEnabled,
+	/// There are multiple notarizations in this block which is not allowed.
+	MultipleNotarizations,
 	/// Underlying tx related error
 	Transaction(transaction::Error),
 	/// Underlying Secp256k1 error (signature validation or invalid public key
@@ -116,6 +120,12 @@ impl From<keychain::Error> for Error {
 impl fmt::Display for Error {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		write!(f, "Block Error (display needs implementation")
+	}
+}
+
+impl From<bmw_utxo::error::Error> for Error {
+	fn from(e: bmw_utxo::error::Error) -> Error {
+		Error::Other(format!("{:?}", e))
 	}
 }
 
@@ -225,8 +235,10 @@ pub struct BlockHeader {
 	pub output_mmr_size: u64,
 	/// Total size of the kernel MMR after applying this block
 	pub kernel_mmr_size: u64,
-	/// Cumulative overage from claimed btc up to this and including block
+	/// Cumulative overage from claimed btc up to this and including this block
 	pub cumulative_btc_overage: u64,
+	/// Cumulative negative overage from burns up to this and including this block
+	pub cumulative_burn_overage: u64,
 	/// Proof of work and related
 	pub pow: ProofOfWork,
 }
@@ -247,6 +259,7 @@ impl Default for BlockHeader {
 			output_mmr_size: 0,
 			kernel_mmr_size: 0,
 			cumulative_btc_overage: 0,
+			cumulative_burn_overage: 0,
 			pow: ProofOfWork::default(),
 		}
 	}
@@ -294,6 +307,7 @@ fn read_block_header<R: Reader>(reader: &mut R) -> Result<BlockHeader, ser::Erro
 	let total_kernel_offset = BlindingFactor::read(reader)?;
 	let (output_mmr_size, kernel_mmr_size) = ser_multiread!(reader, read_u64, read_u64);
 	let cumulative_btc_overage = u64::read(reader)?;
+	let cumulative_burn_overage = u64::read(reader)?;
 	let pow = ProofOfWork::read(reader)?;
 
 	if timestamp > MAX_DATE.and_hms(0, 0, 0).timestamp()
@@ -315,6 +329,7 @@ fn read_block_header<R: Reader>(reader: &mut R) -> Result<BlockHeader, ser::Erro
 		output_mmr_size,
 		kernel_mmr_size,
 		cumulative_btc_overage,
+		cumulative_burn_overage,
 		pow,
 	})
 }
@@ -342,7 +357,8 @@ impl BlockHeader {
 			[write_fixed_bytes, &self.total_kernel_offset],
 			[write_u64, self.output_mmr_size],
 			[write_u64, self.kernel_mmr_size],
-			[write_u64, self.cumulative_btc_overage]
+			[write_u64, self.cumulative_btc_overage],
+			[write_u64, self.cumulative_burn_overage]
 		);
 		Ok(())
 	}
@@ -415,6 +431,9 @@ impl BlockHeader {
 			.checked_neg()
 			.unwrap_or(0)
 			+ (self.cumulative_btc_overage as i64)
+				.checked_neg()
+				.unwrap_or(0)
+			- (self.cumulative_burn_overage as i64)
 				.checked_neg()
 				.unwrap_or(0)
 	}
@@ -569,9 +588,16 @@ impl Block {
 		txs: &[Transaction],
 		difficulty: Difficulty,
 		reward_output: (Output, TxKernel),
+		utxo_data: Option<Weak<RwLock<UtxoData>>>,
 	) -> Result<Block, Error> {
-		let mut block =
-			Block::from_reward(prev, txs, reward_output.0, reward_output.1, difficulty)?;
+		let mut block = Block::from_reward(
+			prev,
+			txs,
+			reward_output.0,
+			reward_output.1,
+			difficulty,
+			utxo_data,
+		)?;
 
 		// Now set the pow on the header so block hashing works as expected.
 		{
@@ -582,19 +608,35 @@ impl Block {
 		Ok(block)
 	}
 
-	/// Return the overage for this block (including the BTC Kernels.
-	pub fn overage(&self) -> i64 {
+	/// Return the overage for this block (including the BTC Kernels and Burn Kernels).
+	pub fn overage(&self, utxo_data: Option<Weak<RwLock<UtxoData>>>) -> i64 {
 		let mut overage = self.header.overage_internal();
+		if utxo_data.is_some() {
+			let utxo_data = &*utxo_data.unwrap().upgrade().unwrap();
+			let utxo_data = utxo_data.read();
+
+			for kernel in self.body.kernels() {
+				match kernel.features {
+					KernelFeatures::BTCClaim { index, .. } => {
+						let address = (*utxo_data).get_address(index);
+						if address.is_ok() {
+							let amount = (*utxo_data).get_sats_by_index(index).unwrap() * 10;
+							overage += (amount as i64).checked_neg().unwrap_or(0)
+						}
+					}
+					_ => {}
+				}
+			}
+		}
 
 		for kernel in self.body.kernels() {
 			match kernel.features {
-				KernelFeatures::BitcoinInit { amount, .. } => {
-					overage += (amount as i64).checked_neg().unwrap_or(0)
+				KernelFeatures::Burn { amount, .. } => {
+					overage += amount as i64;
 				}
 				_ => {}
 			}
 		}
-
 		overage
 	}
 
@@ -612,7 +654,7 @@ impl Block {
 
 		// collect all the inputs, outputs and kernels from the txs
 		for tx in txs {
-			let tx_inputs: Vec<_> = tx.inputs().into();
+			let tx_inputs: Vec<CommitWrapper> = tx.inputs().into();
 			inputs.extend_from_slice(tx_inputs.as_slice());
 			outputs.extend_from_slice(tx.outputs());
 			kernels.extend_from_slice(tx.kernels());
@@ -654,6 +696,7 @@ impl Block {
 		reward_out: Output,
 		reward_kern: TxKernel,
 		difficulty: Difficulty,
+		utxo_data: Option<Weak<RwLock<UtxoData>>>,
 	) -> Result<Block, Error> {
 		// A block is just a big transaction, aggregate and add the reward output
 		// and reward kernel. At this point the tx is technically invalid but the
@@ -677,16 +720,34 @@ impl Block {
 
 		let mut cumulative_btc_overage = prev.cumulative_btc_overage;
 
+		if utxo_data.is_some() {
+			let utxo_data = utxo_data
+				.as_ref()
+				.ok_or(Error::Other("asref error".to_string()))?
+				.upgrade()
+				.ok_or(Error::Other("upgrade error".to_string()))?;
+			let utxo_data = utxo_data.read();
+
+			for tx in txs {
+				for kernel in tx.kernels() {
+					match kernel.features {
+						KernelFeatures::BTCClaim { index, .. } => {
+							let amount = (*utxo_data).get_sats_by_index(index)?;
+							cumulative_btc_overage += amount * 10;
+						}
+						_ => {}
+					}
+				}
+			}
+		}
+
+		let mut cumulative_burn_overage = prev.cumulative_burn_overage;
+
 		for tx in txs {
 			for kernel in tx.kernels() {
 				match kernel.features {
-					KernelFeatures::BitcoinInit {
-						fee: _,
-						index: _,
-						amount,
-						..
-					} => {
-						cumulative_btc_overage += amount;
+					KernelFeatures::Burn { amount, .. } => {
+						cumulative_burn_overage += amount;
 					}
 					_ => {}
 				}
@@ -708,6 +769,7 @@ impl Block {
 					..Default::default()
 				},
 				cumulative_btc_overage,
+				cumulative_burn_overage,
 				..Default::default()
 			},
 			body: agg_tx.into(),
@@ -777,6 +839,19 @@ impl Block {
 		Ok(offset)
 	}
 
+	/// Validate each transaction's btc claims
+	fn verify_btc_claims(&self, utxo_data: Option<Weak<RwLock<UtxoData>>>) -> Result<(), Error> {
+		for kernel in &self.body.kernels {
+			match &kernel.features {
+				KernelFeatures::BTCClaim { .. } => {
+					kernel.validate_btcclaim(utxo_data.clone())?;
+				}
+				_ => {}
+			}
+		}
+		Ok(())
+	}
+
 	/// Validates all the elements in a block that can be checked without
 	/// additional data. Includes commitment sums and kernels, Merkle
 	/// trees, reward, etc.
@@ -784,10 +859,12 @@ impl Block {
 		&self,
 		prev_kernel_offset: &BlindingFactor,
 		verifier: Arc<RwLock<dyn VerifierCache>>,
+		utxo_data: Option<Weak<RwLock<UtxoData>>>,
 	) -> Result<(), Error> {
 		self.body.validate(Weighting::AsBlock, verifier)?;
 		self.verify_kernel_lock_heights()?;
 		self.verify_nrd_kernels_for_header_version()?;
+		self.verify_btc_claims(utxo_data.clone())?;
 
 		// don't verify if there's no outputs/kernels. (Genesis Block)
 		if self.body.outputs.len() > 0 || self.body.kernels.len() > 0 {
@@ -797,7 +874,7 @@ impl Block {
 			// verify.body.outputs and kernel sums
 
 			self.verify_kernel_sums(
-				self.overage(),
+				self.overage(utxo_data),
 				self.block_kernel_offset(prev_kernel_offset.clone())?,
 			)?;
 		}

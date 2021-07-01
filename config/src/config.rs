@@ -34,9 +34,9 @@ use crate::util::logger::LoggingConfig;
 
 /// The default file name to use when trying to derive
 /// the node config file location
-pub const SERVER_CONFIG_FILE_NAME: &str = "grin-server.toml";
-const SERVER_LOG_FILE_NAME: &str = "grin-server.log";
-const GRIN_HOME: &str = ".grin";
+pub const SERVER_CONFIG_FILE_NAME: &str = "bmw-server.toml";
+const SERVER_LOG_FILE_NAME: &str = "bmw-server.log";
+const GRIN_HOME: &str = ".bmw";
 const GRIN_CHAIN_DIR: &str = "chain_data";
 /// Node Rest API and V2 Owner API secret
 pub const API_SECRET_FILE_NAME: &str = ".api_secret";
@@ -116,7 +116,7 @@ fn check_api_secret_files(
 pub fn initial_setup_server(chain_type: &global::ChainTypes) -> Result<GlobalConfig, ConfigError> {
 	check_api_secret_files(chain_type, API_SECRET_FILE_NAME)?;
 	check_api_secret_files(chain_type, FOREIGN_API_SECRET_FILE_NAME)?;
-	// Use config file if current directory if it exists, .grin home otherwise
+	// Use config file if current directory if it exists, .bmw home otherwise
 	if let Some(p) = check_config_current_dir(SERVER_CONFIG_FILE_NAME) {
 		GlobalConfig::new(p.to_str().unwrap())
 	} else {
@@ -171,6 +171,7 @@ impl GlobalConfig {
 			global::ChainTypes::Testnet => {
 				defaults.api_http_addr = "127.0.0.1:13413".to_owned();
 				defaults.p2p_config.port = 13414;
+				defaults.p2p_config.tor_port = 13417;
 				defaults
 					.stratum_mining_config
 					.as_mut()
@@ -180,11 +181,12 @@ impl GlobalConfig {
 					.stratum_mining_config
 					.as_mut()
 					.unwrap()
-					.wallet_listener_url = "http://127.0.0.1:13415".to_owned();
+					.recipient_address = "replace".to_owned();
 			}
 			global::ChainTypes::UserTesting => {
 				defaults.api_http_addr = "127.0.0.1:23413".to_owned();
 				defaults.p2p_config.port = 23414;
+				defaults.p2p_config.tor_port = 23417;
 				defaults.p2p_config.seeding_type = p2p::Seeding::None;
 				defaults
 					.stratum_mining_config
@@ -195,9 +197,9 @@ impl GlobalConfig {
 					.stratum_mining_config
 					.as_mut()
 					.unwrap()
-					.wallet_listener_url = "http://127.0.0.1:23415".to_owned();
+					.recipient_address = "replace".to_owned();
 			}
-			global::ChainTypes::AutomatedTesting => {
+			global::ChainTypes::AutomatedTesting | global::ChainTypes::PerfTesting => {
 				panic!("Can't run automated testing directly");
 			}
 		}

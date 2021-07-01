@@ -33,7 +33,7 @@ fn setup_test() {
 #[test]
 fn test_store_kernel_idx() {
 	setup_test();
-	let chain_dir = ".grin_idx_1";
+	let chain_dir = ".bmw_idx_1";
 	clean_output_dir(chain_dir);
 
 	let commit = Commitment::from_vec(vec![]);
@@ -180,7 +180,7 @@ fn test_store_kernel_idx() {
 #[test]
 fn test_store_kernel_idx_pop_back() {
 	setup_test();
-	let chain_dir = ".grin_idx_2";
+	let chain_dir = ".bmw_idx_2";
 	clean_output_dir(chain_dir);
 
 	let commit = Commitment::from_vec(vec![]);
@@ -288,7 +288,7 @@ fn test_store_kernel_idx_pop_back() {
 #[test]
 fn test_store_kernel_idx_rewind() {
 	setup_test();
-	let chain_dir = ".grin_idx_3";
+	let chain_dir = ".bmw_idx_3";
 	clean_output_dir(chain_dir);
 
 	let commit = Commitment::from_vec(vec![]);
@@ -389,7 +389,7 @@ fn test_store_kernel_idx_rewind() {
 #[test]
 fn test_store_kernel_idx_multiple_commits() {
 	setup_test();
-	let chain_dir = ".grin_idx_4";
+	let chain_dir = ".bmw_idx_4";
 	clean_output_dir(chain_dir);
 
 	let commit = Commitment::from_vec(vec![]);
@@ -477,7 +477,7 @@ fn test_store_kernel_idx_multiple_commits() {
 #[test]
 fn test_store_kernel_idx_clear() -> Result<(), Error> {
 	setup_test();
-	let chain_dir = ".grin_idx_clear";
+	let chain_dir = ".bmw_idx_clear";
 	clean_output_dir(chain_dir);
 
 	let commit = Commitment::from_vec(vec![]);

@@ -19,6 +19,7 @@
 
 use self::core::core::hash::{Hash, Hashed};
 use self::core::core::id::ShortId;
+use self::core::core::transaction::KernelFeatures;
 use self::core::core::verifier_cache::VerifierCache;
 use self::core::core::{transaction, Block, BlockHeader, OutputIdentifier, Transaction, Weighting};
 use self::core::global;
@@ -27,7 +28,9 @@ use crate::pool::Pool;
 use crate::types::{BlockChain, PoolAdapter, PoolConfig, PoolEntry, PoolError, TxSource};
 use chrono::prelude::*;
 use grin_core as core;
+use grin_core::core::Inputs;
 use grin_util as util;
+use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::sync::Arc;
 
@@ -183,7 +186,19 @@ where
 		if !stem && acceptability.as_ref().err() == Some(&PoolError::OverCapacity) {
 			evict = true;
 		} else if acceptability.is_err() {
-			return acceptability;
+			// for BTC Claims, we don't evict if there's space.
+			let mut has_btc_claim_kernel = false;
+			for kernel in tx.kernels() {
+				match kernel.features {
+					KernelFeatures::BTCClaim { .. } => {
+						has_btc_claim_kernel = true;
+					}
+					_ => {}
+				}
+			}
+			if !has_btc_claim_kernel {
+				return acceptability;
+			}
 		}
 
 		// Make sure the transaction is valid before anything else.
@@ -192,6 +207,8 @@ where
 			Weighting::AsTransaction,
 			self.verifier_cache.clone(),
 			header.height,
+			self.blockchain.get_utxo_data()?,
+			None,
 		)
 		.map_err(PoolError::InvalidTx)?;
 
@@ -213,13 +230,17 @@ where
 		}?;
 
 		// Check coinbase maturity before we go any further.
-		let coinbase_inputs: Vec<_> = spent_utxo
+		let coinbase_inputs: Vec<OutputIdentifier> = spent_utxo
 			.iter()
 			.filter(|x| x.is_coinbase())
 			.cloned()
 			.collect();
 		self.blockchain
-			.verify_coinbase_maturity(&coinbase_inputs.as_slice().into())?;
+			.verify_coinbase_maturity(&Inputs::from_output_identifiers(
+				&coinbase_inputs.as_slice(),
+				HashMap::new(), // hashmap new is ok here because we're not checking the sigs
+				                // so they are all set to 0x000..
+			)?)?;
 
 		// Convert the tx to "v2" compatibility with "features and commit" inputs.
 		let ref entry = self.convert_tx_v2(entry, &spent_pool, &spent_utxo)?;
@@ -257,6 +278,7 @@ where
 		spent_utxo: &[OutputIdentifier],
 	) -> Result<PoolEntry, PoolError> {
 		let tx = entry.tx;
+		let sig_map = tx.inputs().build_map()?;
 		debug!(
 			"convert_tx_v2: {} ({} -> v2)",
 			tx.hash(),
@@ -268,7 +290,9 @@ where
 		inputs.sort_unstable();
 
 		let tx = Transaction {
-			body: tx.body.replace_inputs(inputs.as_slice().into()),
+			body: tx
+				.body
+				.replace_inputs(Inputs::from_output_identifiers(inputs.as_slice(), sig_map)?),
 			..tx
 		};
 
@@ -278,6 +302,8 @@ where
 			Weighting::AsTransaction,
 			self.verifier_cache.clone(),
 			header.height,
+			self.blockchain.get_utxo_data()?,
+			None,
 		)?;
 
 		Ok(PoolEntry::new(tx, entry.src))

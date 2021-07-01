@@ -38,6 +38,7 @@ impl TUIStatusView {
 			SyncStatus::Initial => Cow::Borrowed("Initializing"),
 			SyncStatus::NoSync => Cow::Borrowed("Running"),
 			SyncStatus::AwaitingPeers(_) => Cow::Borrowed("Waiting for peers"),
+			SyncStatus::UtxoSync => Cow::Borrowed("Downloading BTC UTXO Set"),
 			SyncStatus::HeaderSync {
 				current_height,
 				highest_height,
@@ -102,6 +103,17 @@ impl TUIStatusView {
 					k_percent
 				))
 			}
+			SyncStatus::TxHashsetRsigsValidation { rsigs, rsigs_total } => {
+				let r_percent = if rsigs_total > 0 {
+					(rsigs * 100) / rsigs_total
+				} else {
+					0
+				};
+				Cow::Owned(format!(
+					"Sync step 5/7: Validating chain state - output R Signatures: {}%",
+					r_percent
+				))
+			}
 			SyncStatus::TxHashsetSave => {
 				Cow::Borrowed("Sync step 6/7: Finalizing chain state for state sync")
 			}
@@ -141,6 +153,16 @@ impl TUIStatusView {
 					LinearLayout::new(Orientation::Horizontal)
 						.child(TextView::new("Disk Usage (GB):              "))
 						.child(TextView::new("0").with_name("disk_usage")),
+				)
+				.child(
+					LinearLayout::new(Orientation::Horizontal).child(TextView::new(
+						"--------------------------------------------------------",
+					)),
+				)
+				.child(
+					LinearLayout::new(Orientation::Horizontal)
+						.child(TextView::new("BTC UTXO Download Status:     "))
+						.child(TextView::new("  ").with_name("basic_btc_load_status")),
 				)
 				.child(
 					LinearLayout::new(Orientation::Horizontal).child(TextView::new(
@@ -259,6 +281,14 @@ impl TUIStatusListener for TUIStatusView {
 		});
 		c.call_on_name("chain_timestamp", |t: &mut TextView| {
 			t.set_content(stats.chain_stats.latest_timestamp.to_string());
+		});
+		c.call_on_name("basic_btc_load_status", |t: &mut TextView| {
+			let percent_utxo_str = if stats.utxo_stats.percentage == u8::MAX {
+				"Complete".to_string()
+			} else {
+				format!("{}%", stats.utxo_stats.percentage)
+			};
+			t.set_content(percent_utxo_str);
 		});
 		c.call_on_name("basic_header_tip_hash", |t: &mut TextView| {
 			t.set_content(stats.header_stats.last_block_h.to_string() + "...");

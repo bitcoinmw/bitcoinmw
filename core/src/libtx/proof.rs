@@ -15,14 +15,234 @@
 //! Rangeproof library functions
 
 use crate::libtx::error::{Error, ErrorKind};
+use crate::ser;
+use crate::ser::deserialize_default;
+use crate::ser::serialize_default;
+use crate::ser::Reader;
+use crate::ser::Writer;
 use blake2::blake2b::blake2b;
 use keychain::extkey_bip32::BIP32GrinHasher;
 use keychain::{Identifier, Keychain, SwitchCommitmentType, ViewKey};
+use rand::{thread_rng, Rng};
 use std::convert::TryFrom;
+use std::fmt;
+use std::str::FromStr;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use util::hex::from_hex;
+use util::hex::to_hex;
+use util::secp::key::PublicKey;
 use util::secp::key::SecretKey;
 use util::secp::pedersen::{Commitment, ProofMessage, RangeProof};
 use util::secp::{self, Secp256k1};
 use zeroize::Zeroize;
+
+/// The size (in bytes) of a payment id
+pub const PAYMENT_ID_SIZE: usize = 8;
+
+/// A payment ID included in a range proof message.
+/// The message is recoverable by rewinding a range proof
+/// passing in the same rewind nonce that was used to originally create the range proof.
+#[derive(Copy, Clone, PartialEq, Eq, Debug, PartialOrd, Ord, Hash)]
+pub struct PaymentId(pub [u8; PAYMENT_ID_SIZE]);
+
+/// Serialization of a payment id
+impl ser::Writeable for PaymentId {
+	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), ser::Error> {
+		writer.write_fixed_bytes(self.0.as_ref())?;
+		Ok(())
+	}
+}
+
+/// Deserialization of a payment id
+impl ser::Readable for PaymentId {
+	fn read<R: Reader>(reader: &mut R) -> Result<PaymentId, ser::Error> {
+		Ok(
+			PaymentId::from_slice(&reader.read_fixed_bytes(PAYMENT_ID_SIZE)?)
+				.map_err(|_e| ser::Error::CountError)?,
+		)
+	}
+}
+
+impl fmt::Display for PaymentId {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		write!(f, "{}", self.to_string())
+	}
+}
+
+impl FromStr for PaymentId {
+	type Err = Error;
+
+	fn from_str(s: &str) -> Result<Self, Self::Err> {
+		PaymentId::from_slice(&from_hex(s).map_err(|_| ErrorKind::InvalidPaymentId)?)
+	}
+}
+
+impl PaymentId {
+	/// Creates a new random payment id.
+	/// - A random payment id is useful for test
+	/// - A random value as default is better than zero, even no use case for it at this moment.
+	pub fn new() -> PaymentId {
+		let mut data = [0u8; PAYMENT_ID_SIZE];
+		thread_rng().fill(&mut data);
+		PaymentId(data)
+	}
+
+	/// Converts a `PAYMENT_ID_SIZE`-byte slice to a payment id.
+	pub fn from_slice(data: &[u8]) -> Result<PaymentId, Error> {
+		match data.len() {
+			PAYMENT_ID_SIZE => {
+				let mut ret = [0; PAYMENT_ID_SIZE];
+				ret[..].copy_from_slice(data);
+				Ok(PaymentId(ret))
+			}
+			_ => Err(ErrorKind::InvalidPaymentId.into()),
+		}
+	}
+
+	/// Get the payment id string
+	pub fn to_string(&self) -> String {
+		to_hex(&self.0)
+	}
+}
+
+/// Create a bulletproof with the ephemeral key for non-interactive transaction
+pub fn nit_create<K, B>(
+	k: &K,
+	b: &B,
+	amount: u64,
+	ephemeral_key_q: SecretKey,
+	switch: SwitchCommitmentType,
+	commit: Commitment,
+	payment_id: PaymentId,
+	extra_data: Option<Vec<u8>>,
+) -> Result<RangeProof, Error>
+where
+	K: Keychain,
+	B: ProofBuild,
+{
+	let secp = k.secp();
+	let ephemeral_key_qq = PublicKey::from_secret_key(secp, &ephemeral_key_q)?;
+	let rewind_nonce = b.nit_rewind_nonce(secp, &ephemeral_key_qq, &commit)?;
+	let private_nonce = b.nit_private_nonce(secp, &ephemeral_key_q, &commit)?;
+	let message = NitProofMessage::new(payment_id, switch);
+	let blind = match switch {
+		SwitchCommitmentType::Regular => secp.blind_switch(amount, ephemeral_key_q)?,
+		SwitchCommitmentType::None => ephemeral_key_q,
+	};
+	Ok(secp.bullet_proof(
+		amount,
+		blind,
+		rewind_nonce,
+		private_nonce,
+		extra_data,
+		Some(message.into()),
+	))
+}
+
+/// A range proof message for non-interactive-transaction.
+/// The message is recoverable by rewinding a range proof
+/// passing in the same rewind nonce that was used to originally create the range proof.
+#[derive(Copy, Clone, PartialEq, Eq, Debug, PartialOrd, Ord)]
+pub struct NitProofMessage {
+	/// Message Version
+	pub ver: u8,
+	/// Reserved for future
+	pub reserved: [u8; 2],
+	/// Switch commitment type
+	pub switch: SwitchCommitmentType,
+	/// Timestamp of coin creation, expressed with a block height, to kill the replay-attack.
+	pub timestamp: u64,
+	/// Payment Id
+	pub payment_id: PaymentId,
+}
+
+/// Serialization of a NIT proof message
+impl ser::Writeable for NitProofMessage {
+	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), ser::Error> {
+		writer.write_u8(self.ver)?;
+		writer.write_u8(self.reserved[0])?;
+		writer.write_u8(self.reserved[1])?;
+		writer.write_u8(self.switch.into())?;
+		writer.write_u64(self.timestamp)?;
+		self.payment_id.write(writer)?;
+		Ok(())
+	}
+}
+
+/// Deserialization of a NIT proof message
+impl ser::Readable for NitProofMessage {
+	fn read<R: Reader>(reader: &mut R) -> Result<Self, ser::Error> {
+		let ver = reader.read_u8()?;
+		let (s1, s2) = ser_multiread!(reader, read_u8, read_u8);
+		let reserved = [s1, s2];
+		let switch = reader.read_u8()?;
+		let switch =
+			SwitchCommitmentType::try_from(switch).map_err(|_| ser::Error::InvalidSwitchType)?;
+		let timestamp = reader.read_u64()?;
+		let payment_id = PaymentId::read(reader)?;
+		Ok(NitProofMessage {
+			ver,
+			reserved,
+			switch,
+			timestamp,
+			payment_id,
+		})
+	}
+}
+
+/// Get ProofMessage from NitProofMessage
+impl From<NitProofMessage> for ProofMessage {
+	fn from(nit_proof_msg: NitProofMessage) -> Self {
+		let mut msg_buf = vec![];
+		serialize_default(&mut msg_buf, &nit_proof_msg).unwrap();
+		ProofMessage::from_bytes(&msg_buf)
+	}
+}
+
+/// Get NitProofMessage from ProofMessage
+impl TryFrom<ProofMessage> for NitProofMessage {
+	type Error = Error;
+
+	fn try_from(proof_msg: ProofMessage) -> Result<Self, Error> {
+		let msg_buf = proof_msg.as_bytes().to_vec();
+		let nit_proof_msg: NitProofMessage = deserialize_default(&mut &msg_buf[..])?;
+		Ok(nit_proof_msg)
+	}
+}
+
+impl Default for NitProofMessage {
+	fn default() -> NitProofMessage {
+		NitProofMessage {
+			ver: 0,
+			reserved: [0; 2],
+			switch: SwitchCommitmentType::Regular,
+			timestamp: 0,
+			payment_id: PaymentId::new(),
+		}
+	}
+}
+
+impl NitProofMessage {
+	/// Create a new proof message
+	pub fn new(payment_id: PaymentId, switch: SwitchCommitmentType) -> NitProofMessage {
+		let timestamp = SystemTime::now()
+			.duration_since(UNIX_EPOCH)
+			.unwrap_or(Duration::new(0, 0))
+			.as_millis() as u64;
+		NitProofMessage {
+			ver: 0,
+			reserved: [0; 2],
+			switch,
+			timestamp,
+			payment_id,
+		}
+	}
+
+	/// Set the payment id which is normally the user id of the centralized exchanges.
+	pub fn set_payment_id(&mut self, payment_id: PaymentId) {
+		self.payment_id = payment_id;
+	}
+}
 
 /// Create a bulletproof
 pub fn create<K, B>(
@@ -96,6 +316,41 @@ where
 	Ok(check.map(|(id, switch)| (amount, id, switch)))
 }
 
+/// Rewind a rangeproof to retrieve the amount and the message of a non-interactive-transaction output.
+pub fn nit_rewind<B>(
+	secp: &Secp256k1,
+	b: &B,
+	commit: Commitment,
+	ephemeral_key_q: SecretKey,
+	extra_data: Option<Vec<u8>>,
+	proof: RangeProof,
+) -> Result<Option<(u64, NitProofMessage)>, Error>
+where
+	B: ProofBuild,
+{
+	let ephemeral_key_qq = PublicKey::from_secret_key(secp, &ephemeral_key_q)?;
+	let rewind_nonce = b
+		.nit_rewind_nonce(secp, &ephemeral_key_qq, &commit)
+		.map_err(|e| {
+			ErrorKind::RangeProof(format!("Unable rewind for commit {:?}, {}", commit, e))
+		})?;
+
+	let info = secp.rewind_bullet_proof(commit, rewind_nonce, extra_data, proof);
+	if info.is_err() {
+		return Ok(None);
+	}
+	let info = info.unwrap();
+
+	let amount = info.value;
+	let check = b
+		.nit_check_output(secp, &commit, amount, info.message, ephemeral_key_q)
+		.map_err(|e| {
+			ErrorKind::RangeProof(format!("Unable to check output for {:?}, {}", commit, e))
+		})?;
+
+	Ok(check.map(|msg| (amount, msg)))
+}
+
 /// Used for building proofs and checking if the output belongs to the wallet
 pub trait ProofBuild {
 	/// Create a BP nonce that will allow to rewind the derivation path and flags
@@ -104,6 +359,22 @@ pub trait ProofBuild {
 	/// Create a BP nonce that blinds the private key
 	fn private_nonce(&self, secp: &Secp256k1, commit: &Commitment) -> Result<SecretKey, Error>;
 
+	/// Create a BP rewind nonce for Non-Interactive-Transaction that will allow to rewind the value and the message
+	fn nit_rewind_nonce(
+		&self,
+		secp: &Secp256k1,
+		ephemeral_key_qq: &PublicKey,
+		commit: &Commitment,
+	) -> Result<SecretKey, Error>;
+
+	/// Create a BP private nonce for Non-Interactive-Transaction
+	fn nit_private_nonce(
+		&self,
+		_secp: &Secp256k1,
+		ephemeral_key_q: &SecretKey,
+		commit: &Commitment,
+	) -> Result<SecretKey, Error>;
+
 	/// Create a BP message
 	fn proof_message(
 		&self,
@@ -111,6 +382,16 @@ pub trait ProofBuild {
 		id: &Identifier,
 		switch: SwitchCommitmentType,
 	) -> Result<ProofMessage, Error>;
+
+	/// Check the output for NIT proofs
+	fn nit_check_output(
+		&self,
+		_secp: &Secp256k1,
+		commit: &Commitment,
+		amount: u64,
+		message: ProofMessage,
+		ephemeral_key_q: SecretKey,
+	) -> Result<Option<NitProofMessage>, Error>;
 
 	/// Check if the output belongs to this keychain
 	fn check_output(
@@ -180,6 +461,46 @@ where
 		self.nonce(commit, true)
 	}
 
+	fn nit_rewind_nonce(
+		&self,
+		secp: &Secp256k1,
+		ephemeral_key_qq: &PublicKey,
+		commit: &Commitment,
+	) -> Result<SecretKey, Error> {
+		let qq = ephemeral_key_qq
+			.serialize_vec(&secp, true)
+			.as_ref()
+			.to_vec();
+		let rewind_hash = blake2b(32, &[], &qq[..]).as_bytes().to_vec();
+
+		let res = blake2b(32, &commit.0, &rewind_hash);
+		SecretKey::from_slice(&secp, res.as_bytes()).map_err(|e| {
+			ErrorKind::RangeProof(format!(
+				"Unable to extract nonce from commit {:?}, {}",
+				commit, e
+			))
+			.into()
+		})
+	}
+
+	fn nit_private_nonce(
+		&self,
+		secp: &Secp256k1,
+		ephemeral_key_q: &SecretKey,
+		commit: &Commitment,
+	) -> Result<SecretKey, Error> {
+		let private_hash = blake2b(32, &[], &ephemeral_key_q.0).as_bytes().to_vec();
+
+		let res = blake2b(32, &commit.0, &private_hash);
+		SecretKey::from_slice(&secp, res.as_bytes()).map_err(|e| {
+			ErrorKind::RangeProof(format!(
+				"Unable to extract nonce from commit {:?}, {}",
+				commit, e
+			))
+			.into()
+		})
+	}
+
 	/// Message bytes:
 	///     0: reserved for future use
 	///     1: wallet type (0 for standard)
@@ -197,6 +518,34 @@ where
 		let id_bytes = id.to_bytes();
 		msg[3..20].clone_from_slice(&id_bytes[..17]);
 		Ok(ProofMessage::from_bytes(&msg))
+	}
+
+	/// Check if non-interactive-transaction output commit belongs to this shared ephemeral key
+	fn nit_check_output(
+		&self,
+		_secp: &Secp256k1,
+		commit: &Commitment,
+		amount: u64,
+		message: ProofMessage,
+		ephemeral_key_q: SecretKey,
+	) -> Result<Option<NitProofMessage>, Error> {
+		if message.len() != 20 {
+			return Ok(None);
+		}
+		let nit_proof_msg = NitProofMessage::try_from(message)?;
+		if nit_proof_msg.ver != 0 {
+			// So far only version 0 used.
+			return Ok(None);
+		}
+
+		let commit_expected =
+			self.keychain
+				.commit_with_key(amount, ephemeral_key_q, nit_proof_msg.switch)?;
+		if commit == &commit_expected {
+			Ok(Some(nit_proof_msg))
+		} else {
+			Ok(None)
+		}
 	}
 
 	fn check_output(
@@ -309,6 +658,17 @@ where
 		Ok(ProofMessage::from_bytes(&msg))
 	}
 
+	fn nit_check_output(
+		&self,
+		_secp: &Secp256k1,
+		_commit: &Commitment,
+		_amount: u64,
+		_message: ProofMessage,
+		_ephemeral_key_q: SecretKey,
+	) -> Result<Option<NitProofMessage>, Error> {
+		unimplemented!();
+	}
+
 	fn check_output(
 		&self,
 		_secp: &Secp256k1,
@@ -335,6 +695,24 @@ where
 		} else {
 			Ok(None)
 		}
+	}
+
+	fn nit_rewind_nonce(
+		&self,
+		_secp: &Secp256k1,
+		_ephemeral_key_qq: &PublicKey,
+		_commit: &Commitment,
+	) -> Result<SecretKey, Error> {
+		unimplemented!()
+	}
+
+	fn nit_private_nonce(
+		&self,
+		_secp: &Secp256k1,
+		_ephemeral_key_q: &SecretKey,
+		_commit: &Commitment,
+	) -> Result<SecretKey, Error> {
+		unimplemented!()
 	}
 }
 
@@ -373,6 +751,27 @@ impl ProofBuild for ViewKey {
 		_id: &Identifier,
 		_switch: SwitchCommitmentType,
 	) -> Result<ProofMessage, Error> {
+		unimplemented!();
+	}
+
+	/// Create a BP rewind nonce for Non-Interactive-Transaction that will allow to rewind the value and the message
+	fn nit_rewind_nonce(
+		&self,
+		_secp: &Secp256k1,
+		_ephemeral_key_qq: &PublicKey,
+		_commit: &Commitment,
+	) -> Result<SecretKey, Error> {
+		unimplemented!();
+	}
+
+	fn nit_check_output(
+		&self,
+		_secp: &Secp256k1,
+		_commit: &Commitment,
+		_amount: u64,
+		_message: ProofMessage,
+		_ephemeral_key_q: SecretKey,
+	) -> Result<Option<NitProofMessage>, Error> {
 		unimplemented!();
 	}
 
@@ -426,6 +825,15 @@ impl ProofBuild for ViewKey {
 		} else {
 			Ok(None)
 		}
+	}
+
+	fn nit_private_nonce(
+		&self,
+		_secp: &Secp256k1,
+		_ephemeral_key_q: &SecretKey,
+		_commit: &Commitment,
+	) -> Result<SecretKey, Error> {
+		unimplemented!()
 	}
 }
 
@@ -592,6 +1000,83 @@ mod tests {
 		assert!(rewind.is_ok());
 		let rewind = rewind.unwrap();
 		assert!(rewind.is_none());
+	}
+
+	#[test]
+	fn test_nit_rewind() {
+		use crate::address::Address;
+		use crate::global;
+
+		// receiver generates an address
+		let keychain_r = ExtKeychain::from_random_seed(false).unwrap();
+		let builder_r = ProofBuilder::new(&keychain_r);
+		let (pri_view, pub_view) = keychain_r
+			.secp()
+			.generate_keypair(&mut thread_rng())
+			.unwrap();
+		let recipient_addr =
+			Address::from_one_pubkey(&pub_view, global::ChainTypes::AutomatedTesting);
+
+		// sender creates a random keychain, unknown to receiver
+		let rng = &mut thread_rng();
+		let keychain_s = ExtKeychain::from_random_seed(false).unwrap();
+		let builder_s = ProofBuilder::new(&keychain_s);
+
+		// sender chooses amount/switch/payment_id/timestamp
+		let amount = rng.gen(); // pick a random amount
+		let switch = SwitchCommitmentType::Regular;
+		let payment_id = PaymentId::new();
+
+		// sender generates random nonce and builds ephemeral key
+		let (pri_nonce, pub_nonce) = keychain_s
+			.secp()
+			.generate_keypair(&mut thread_rng())
+			.unwrap();
+		// sender generates the emphemeral key from the recipient_address
+		let (ephemeral_key_q_s, _pp_apos) = recipient_addr
+			.get_ephemeral_key_for_tx(keychain_s.secp(), &pri_nonce)
+			.unwrap();
+		// sender generates a commitment
+		let commit = keychain_s
+			.commit_with_key(amount, ephemeral_key_q_s.clone(), switch)
+			.unwrap();
+
+		// sender generates the nit proof
+		let proof = nit_create(
+			&keychain_s,
+			&builder_s,
+			amount,
+			ephemeral_key_q_s.clone(),
+			switch,
+			commit,
+			payment_id,
+			None,
+		)
+		.unwrap();
+		assert!(verify(&keychain_s.secp(), commit, proof, None).is_ok());
+
+		// now on the receiver side
+		// generate ephemeral key from pri_view
+		let (ephemeral_key_q_r, _) = recipient_addr
+			.get_ephemeral_key_for_rx(keychain_r.secp(), &pri_view, &pub_nonce)
+			.unwrap();
+
+		assert_eq!(ephemeral_key_q_s, ephemeral_key_q_r);
+
+		let rewind = nit_rewind(
+			keychain_r.secp(),
+			&builder_r,
+			commit,
+			ephemeral_key_q_r,
+			None,
+			proof,
+		)
+		.unwrap();
+		assert!(rewind.is_some());
+		let (r_amount, proof_msg) = rewind.unwrap();
+		assert_eq!(r_amount, amount);
+		assert_eq!(proof_msg.payment_id, payment_id);
+		assert_eq!(proof_msg.switch, switch);
 	}
 
 	#[test]

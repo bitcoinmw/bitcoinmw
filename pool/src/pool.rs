@@ -25,11 +25,12 @@ use self::core::core::{
 };
 use self::util::RwLock;
 use crate::types::{BlockChain, PoolEntry, PoolError};
+use bmw_utxo::utxo_data::UtxoData;
 use grin_core as core;
 use grin_util as util;
 use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use util::static_secp_instance;
 
 pub struct Pool<B, V>
@@ -167,6 +168,8 @@ where
 			Weighting::NoLimit,
 			self.verifier_cache.clone(),
 			header.height,
+			self.blockchain.get_utxo_data()?,
+			None,
 		)?;
 
 		Ok(Some(tx))
@@ -235,7 +238,13 @@ where
 	) -> Result<BlockSums, PoolError> {
 		// Validate the tx, conditionally checking against weight limits,
 		// based on weight verification type.
-		tx.validate(weighting, self.verifier_cache.clone(), header.height)?;
+		tx.validate(
+			weighting,
+			self.verifier_cache.clone(),
+			header.height,
+			self.blockchain.get_utxo_data()?,
+			None,
+		)?;
 
 		// Validate the tx against current chain state.
 		// Check all inputs are in the current UTXO set.
@@ -279,7 +288,7 @@ where
 			let mut dupe = false;
 			for kernel in tx.kernels() {
 				match kernel.features {
-					KernelFeatures::BitcoinInit { index, .. } => {
+					KernelFeatures::BTCClaim { index, .. } => {
 						if map.get(&index).is_some() {
 							dupe = true;
 						}
@@ -331,7 +340,7 @@ where
 		tx: &Transaction,
 		header: &BlockHeader,
 	) -> Result<BlockSums, PoolError> {
-		let overage = tx.overage(header.height);
+		let overage = tx.overage(header.height, self.blockchain.get_utxo_data()?, None);
 
 		let offset = {
 			let secp = static_secp_instance();
@@ -387,11 +396,12 @@ where
 		let mut rejected = HashSet::new();
 
 		for entry in &self.entries {
+			let mut is_rejected = false;
+
 			// check the commits index to find parents and their position
 			// if single parent then we are good, we can bucket it with its parent
 			// if multiple parents then we need to combine buckets, but for now simply reject it (rare case)
 			let mut insert_pos = None;
-			let mut is_rejected = false;
 
 			let tx_inputs: Vec<_> = entry.tx.inputs().into();
 			for input in tx_inputs {
@@ -435,12 +445,19 @@ where
 					// if the aggregate tx is a valid tx.
 					// Otherwise discard and let the next block pick this tx up.
 					let bucket = &tx_buckets[pos];
+					let utxo_data = self.blockchain.get_utxo_data();
+					let utxo_data = if utxo_data.is_ok() {
+						utxo_data.unwrap()
+					} else {
+						None
+					};
 
 					if let Ok(new_bucket) = bucket.aggregate_with_tx(
 						entry.tx.clone(),
 						weighting,
 						self.verifier_cache.clone(),
 						height,
+						utxo_data,
 					) {
 						if new_bucket.fee_rate >= bucket.fee_rate {
 							// Only aggregate if it would not reduce the fee_rate ratio.
@@ -560,11 +577,12 @@ impl Bucket {
 		weighting: Weighting,
 		verifier_cache: Arc<RwLock<dyn VerifierCache>>,
 		height: u64,
+		utxo_data: Option<Weak<RwLock<UtxoData>>>,
 	) -> Result<Bucket, PoolError> {
 		let mut raw_txs = self.raw_txs.clone();
 		raw_txs.push(new_tx);
 		let agg_tx = transaction::aggregate(&raw_txs)?;
-		agg_tx.validate(weighting, verifier_cache, height)?;
+		agg_tx.validate(weighting, verifier_cache, height, utxo_data, None)?;
 		Ok(Bucket {
 			fee_rate: agg_tx.fee_rate(height),
 			raw_txs: raw_txs,

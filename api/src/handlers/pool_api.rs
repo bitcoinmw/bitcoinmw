@@ -103,12 +103,18 @@ where
 			.blockchain
 			.chain_head()
 			.context(ErrorKind::Internal("Failed to get chain head".to_owned()))?;
-		tx_pool
-			.add_to_pool(source, tx, !fluff.unwrap_or(false), &header)
-			.context(ErrorKind::Internal("Failed to update pool".to_owned()))?;
-		Ok(())
+		let res = tx_pool.add_to_pool(source, tx, !fluff.unwrap_or(false), &header);
+
+		match res {
+			Ok(_) => Ok(()),
+			Err(e) => {
+				warn!("txpool rejected invalid transaction due to: {}", e);
+				Err(ErrorKind::Internal(format!("Failed to update pool due to: {}", e)).into())
+			}
+		}
 	}
 }
+
 /// Dummy wrapper for the hex-encoded serialized transaction.
 #[derive(Serialize, Deserialize)]
 struct TxWrapper {

@@ -1,6 +1,6 @@
 [package]
 name = "grin_p2p"
-version = "5.1.0-alpha.1"
+version = "0.0.1"
 authors = ["Grin Developers <mimblewimble@lists.launchpad.net>"]
 description = "Chain implementation for grin, a simple, private and scalable cryptocurrency implementation based on the Mimblewimble chain format."
 license = "Apache-2.0"
@@ -13,6 +13,8 @@ edition = "2018"
 bitflags = "1"
 enum_primitive = "0.1"
 lru-cache = "0.1"
+socks = "0.3.2"
+tor-stream = "0.2"
 num = "0.2"
 rand = "0.6"
 serde = "1"
@@ -22,10 +24,11 @@ log = "0.4"
 chrono = { version = "0.4.11", features = ["serde"] }
 bytes = "0.5"
 
-grin_core = { path = "../core", version = "5.1.0-alpha.1" }
-grin_store = { path = "../store", version = "5.1.0-alpha.1" }
-grin_util = { path = "../util", version = "5.1.0-alpha.1" }
-grin_chain = { path = "../chain", version = "5.1.0-alpha.1" }
+grin_core = { path = "../core", version = "0.0.1" }
+grin_store = { path = "../store", version = "0.0.1" }
+grin_util = { path = "../util", version = "0.0.1" }
+grin_chain = { path = "../chain", version = "0.0.1" }
+bmw_utxo = { path = "../utxo", version = "0.0.1" }
 
 [dev-dependencies]
-grin_pool = { path = "../pool", version = "5.1.0-alpha.1" }
+grin_pool = { path = "../pool", version = "0.0.1" }

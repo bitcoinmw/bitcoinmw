@@ -91,7 +91,7 @@ impl Default for LoggingConfig {
 			stdout_log_level: Level::Warn,
 			log_to_file: true,
 			file_log_level: Level::Info,
-			log_file_path: String::from("grin.log"),
+			log_file_path: String::from("bmw.log"),
 			log_file_append: true,
 			log_max_size: Some(1024 * 1024 * 16), // 16 megabytes default
 			log_max_files: Some(DEFAULT_ROTATE_LOG_FILES),
@@ -100,7 +100,7 @@ impl Default for LoggingConfig {
 	}
 }
 
-/// This filter is rejecting messages that doesn't start with "grin"
+/// This filter is rejecting messages that doesn't start with "grin" or "bmw"
 /// in order to save log space for only Grin-related records
 #[derive(Debug)]
 struct GrinFilter;
@@ -108,7 +108,7 @@ struct GrinFilter;
 impl Filter for GrinFilter {
 	fn filter(&self, record: &Record<'_>) -> Response {
 		if let Some(module_path) = record.module_path() {
-			if module_path.starts_with("grin") {
+			if module_path.starts_with("grin") || module_path.starts_with("bmw") {
 				return Response::Neutral;
 			}
 		}
@@ -343,12 +343,7 @@ fn send_panic_to_log() {
 		//also print to stderr
 		let tui_running = *TUI_RUNNING.lock();
 		if !tui_running {
-			let config = LOGGING_CONFIG.lock();
-
-			eprintln!(
-				"Thread '{}' panicked with message:\n\"{}\"\nSee {} for further details.",
-				thread, msg, config.log_file_path
-			);
+			eprintln!("Thread '{}' panicked with message:\n\"{}\"\n", thread, msg,);
 		}
 	}));
 }

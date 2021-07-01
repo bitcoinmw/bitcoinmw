@@ -30,7 +30,7 @@ use std::sync::Arc;
 fn test_block_building_max_weight() {
 	util::init_test_logger();
 	global::set_local_chain_type(global::ChainTypes::AutomatedTesting);
-	global::set_local_accept_fee_base(1);
+	global::set_local_accept_fee_base(0);
 
 	let keychain: ExtKeychain = Keychain::from_random_seed(false).unwrap();
 
@@ -50,52 +50,72 @@ fn test_block_building_max_weight() {
 	);
 
 	// mine past HF4 to see effect of set_local_accept_fee_base
-	add_some_blocks(&chain, 4 * 3, &keychain);
+	add_some_blocks(&chain, 4, &keychain);
 
 	let header_1 = chain.get_header_by_height(1).unwrap();
+	let block_1 = chain.get_block(&header_1.hash()).unwrap();
+	let output = block_1.outputs()[0];
+	let index: u64 = chain.get_output_pos(&output.commitment()).unwrap() - 1;
 
 	// Now create tx to spend an early coinbase (now matured).
 	// Provides us with some useful outputs to test with.
 	let initial_tx = test_transaction_spending_coinbase(
 		&keychain,
 		&header_1,
-		vec![1_000_000, 2_000_000, 3_000_000, 10_000_000],
+		output,
+		index,
+		vec![101, 102, 103, 104],
 	);
 
 	// Mine that initial tx so we can spend it with multiple txs.
 	add_block(&chain, &[initial_tx], &keychain);
+
+	// get a second layer of txns
+	let header_2 = chain.get_header_by_height(2).unwrap();
+	let block_2 = chain.get_block(&header_2.hash()).unwrap();
+	let output = block_2.outputs()[0];
+	let index: u64 = chain.get_output_pos(&output.commitment()).unwrap() - 1;
+	let second_tx = test_transaction_spending_coinbase(
+		&keychain,
+		&header_2,
+		output,
+		index,
+		vec![105, 106, 107, 108],
+	);
+
+	// Mine that second tx so we can spend it with multiple txs.
+	add_block(&chain, &[second_tx], &keychain);
 
 	let header = chain.head_header().unwrap();
 
 	// Build some dependent txs to add to the txpool.
 	// We will build a block from a subset of these.
 	let txs = vec![
-		test_transaction(
-			&keychain,
-			vec![10_000_000],
-			vec![3_900_000, 1_300_000, 1_200_000, 1_100_000],
-		),
-		test_transaction(&keychain, vec![1_000_000], vec![900_000, 10_000]),
-		test_transaction(&keychain, vec![900_000], vec![800_000, 20_000]),
-		test_transaction(&keychain, vec![2_000_000], vec![1_970_000]),
-		test_transaction(&keychain, vec![3_000_000], vec![2_900_000, 30_000]),
-		test_transaction(&keychain, vec![2_900_000], vec![2_800_000, 40_000]),
+		test_transaction(&keychain, vec![101], vec![10, 11], &chain),
+		test_transaction(&keychain, vec![102], vec![12, 13], &chain),
+		test_transaction(&keychain, vec![103], vec![14, 15], &chain),
+		test_transaction(&keychain, vec![104], vec![16], &chain),
+		test_transaction(&keychain, vec![105], vec![17, 18, 19], &chain),
+		test_transaction(&keychain, vec![106], vec![20, 21, 22], &chain),
+		test_transaction(&keychain, vec![107], vec![23, 24, 25], &chain),
+		test_transaction(&keychain, vec![108], vec![26], &chain),
 	];
 
 	// Fees and weights of our original txs in insert order.
 	assert_eq!(
 		txs.iter().map(|x| x.fee(header.height)).collect::<Vec<_>>(),
-		[2_500_000, 90_000, 80_000, 30_000, 70_000, 60_000]
+		[80, 77, 74, 88, 51, 43, 35, 82]
 	);
 	assert_eq!(
 		txs.iter().map(|x| x.weight()).collect::<Vec<_>>(),
-		[88, 46, 46, 25, 46, 46]
+		[46, 46, 46, 25, 67, 67, 67, 25]
 	);
+
 	assert_eq!(
 		txs.iter()
 			.map(|x| x.fee_rate(header.height))
 			.collect::<Vec<_>>(),
-		[28409, 1956, 1739, 1200, 1521, 1304]
+		[1, 1, 1, 3, 0, 0, 0, 3]
 	);
 
 	// Populate our txpool with the txs.
@@ -104,7 +124,7 @@ fn test_block_building_max_weight() {
 	}
 
 	// Check we added them all to the txpool successfully.
-	assert_eq!(pool.total_size(), 6);
+	assert_eq!(pool.total_size(), 8);
 
 	// // Prepare some "mineable" txs from the txpool.
 	// // Note: We cannot fit all the txs from the txpool into a block.
@@ -113,35 +133,35 @@ fn test_block_building_max_weight() {
 	// Fees and weights of the "mineable" txs.
 	assert_eq!(
 		txs.iter().map(|x| x.fee(header.height)).collect::<Vec<_>>(),
-		[2_500_000, 90_000, 80_000, 70_000]
+		[88, 82, 80, 77, 74]
 	);
 	assert_eq!(
 		txs.iter().map(|x| x.weight()).collect::<Vec<_>>(),
-		[88, 46, 46, 46]
+		[25, 25, 46, 46, 46]
 	);
 	assert_eq!(
 		txs.iter()
 			.map(|x| x.fee_rate(header.height))
 			.collect::<Vec<_>>(),
-		[28409, 1956, 1739, 1521]
+		[3, 3, 1, 1, 1]
 	);
 
 	add_block(&chain, &txs, &keychain);
 	let block = chain.get_block(&chain.head().unwrap().hash()).unwrap();
 
 	// Check contents of the block itself (including coinbase reward).
-	assert_eq!(block.inputs().len(), 3);
-	assert_eq!(block.outputs().len(), 10);
-	assert_eq!(block.kernels().len(), 5);
+	assert_eq!(block.inputs().len(), 5);
+	assert_eq!(block.outputs().len(), 9);
+	assert_eq!(block.kernels().len(), 6);
 
 	// Now reconcile the transaction pool with the new block
 	// and check the resulting contents of the pool are what we expect.
 	pool.reconcile_block(&block).unwrap();
 
-	// We should still have 2 tx in the pool after accepting the new block.
+	// We should still have 3 tx in the pool after accepting the new block.
 	// This one exceeded the max block weight when building the block so
 	// remained in the txpool.
-	assert_eq!(pool.total_size(), 2);
+	assert_eq!(pool.total_size(), 3);
 
 	// Cleanup db directory
 	clean_output_dir(db_root.into());

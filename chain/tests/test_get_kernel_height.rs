@@ -21,7 +21,7 @@ use util::secp::pedersen::Commitment;
 
 #[test]
 fn test_get_kernel_height() {
-	let chain_dir = ".grin.get_kernel_height";
+	let chain_dir = ".bmw.get_kernel_height";
 	clean_output_dir(chain_dir);
 	let chain = mine_chain(chain_dir, 5);
 	assert_eq!(chain.head().unwrap().height, 4);

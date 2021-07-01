@@ -124,14 +124,14 @@ fn build_request(
 ) -> Result<Request<Body>, Error> {
 	let mut builder = Request::builder();
 	if let Some(api_secret) = api_secret {
-		let basic_auth = format!("Basic {}", to_base64(&format!("grin:{}", api_secret)));
+		let basic_auth = format!("Basic {}", to_base64(&format!("bmw:{}", api_secret)));
 		builder = builder.header(AUTHORIZATION, basic_auth);
 	}
 
 	builder
 		.method(method)
 		.uri(url)
-		.header(USER_AGENT, "grin-client")
+		.header(USER_AGENT, "bmw-client")
 		.header(ACCEPT, "application/json")
 		.header(CONTENT_TYPE, "application/json")
 		.body(match body {

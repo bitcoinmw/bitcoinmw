@@ -28,10 +28,12 @@ use crate::store;
 use crate::txhashset;
 use crate::types::{CommitPos, Options, Tip};
 use crate::util::RwLock;
-use bitcoinmw_loader::loader::UtxoData;
+use bitvec::prelude::*;
+use bmw_utxo::utxo_data::UtxoData;
 use grin_core::core::KernelFeatures;
 use std::collections::HashMap;
 use std::convert::TryInto;
+use std::mem::replace;
 use std::sync::{Arc, Weak};
 
 /// Contextual information required to process a new block and either reject or
@@ -88,7 +90,7 @@ fn validate_pow_only(header: &BlockHeader, ctx: &mut BlockContext<'_>) -> Result
 pub fn process_block(
 	b: &Block,
 	ctx: &mut BlockContext<'_>,
-	utxo_data: Option<&Weak<UtxoData>>,
+	utxo_data: Option<Weak<RwLock<UtxoData>>>,
 ) -> Result<(Option<Tip>, BlockHeader), Error> {
 	debug!(
 		"pipe: process_block {} at {} [in/out/kern: {}/{}/{}] ({})",
@@ -122,62 +124,69 @@ pub fn process_block(
 
 	// Validate the block itself, make sure it is internally consistent.
 	// Use the verifier_cache for verifying rangeproofs and kernel signatures.
-	validate_block(b, ctx)?;
+	validate_block(b, ctx, utxo_data.clone())?;
 
 	// Start a chain extension unit of work dependent on the success of the
 	// internal validation and saving operations
 	let header_pmmr = &mut ctx.header_pmmr;
 	let txhashset = &mut ctx.txhashset;
 	let batch = &mut ctx.batch;
-	let fork_point = txhashset::extending(header_pmmr, txhashset, batch, |ext, batch| {
-		let fork_point = rewind_and_apply_fork(&prev, ext, batch)?;
+	let verifier = ctx.verifier_cache.clone();
+	let fork_point = txhashset::extending(
+		header_pmmr,
+		txhashset,
+		batch,
+		utxo_data.clone(),
+		verifier,
+		|ext, verifier, batch| {
+			let fork_point =
+				rewind_and_apply_fork(&prev, ext, verifier.clone(), batch, utxo_data.clone())?;
 
-		// Check any coinbase being spent have matured sufficiently.
-		// This needs to be done within the context of a potentially
-		// rewound txhashset extension to reflect chain state prior
-		// to applying the new block.
-		verify_coinbase_maturity(b, ext, batch)?;
+			// Check any coinbase being spent have matured sufficiently.
+			// This needs to be done within the context of a potentially
+			// rewound txhashset extension to reflect chain state prior
+			// to applying the new block.
+			verify_coinbase_maturity(b, ext, batch)?;
 
-		// Validate the block against the UTXO set.
-		validate_utxo(b, ext, batch)?;
+			// Validate the block against the UTXO set.
+			validate_utxo(b, ext, verifier, batch)?;
 
-		// Using block_sums (utxo_sum, kernel_sum) for the previous block from the db
-		// we can verify_kernel_sums across the full UTXO sum and full kernel sum
-		// accounting for inputs/outputs/kernels in this new block.
-		// We know there are no double-spends etc. if this verifies successfully.
-		verify_block_sums(b, batch)?;
+			// Using block_sums (utxo_sum, kernel_sum) for the previous block from the db
+			// we can verify_kernel_sums across the full UTXO sum and full kernel sum
+			// accounting for inputs/outputs/kernels in this new block.
+			// We know there are no double-spends etc. if this verifies successfully.
+			verify_block_sums(b, batch, utxo_data.clone())?;
 
-		// Validate the block against BTC Claim UTXOs.
-		// Make sure no duplicates
-		// TODO: Handle forks and reorgs
-		validate_btc_utxos(b, utxo_data, &fork_point, &head)?;
+			// Validate the block against BTC Claim UTXOs.
+			// Make sure no duplicates
+			validate_btc_utxos(b, utxo_data.clone(), &fork_point, &head, batch)?;
 
-		// Apply the block to the txhashset state.
-		// Validate the txhashset roots and sizes against the block header.
-		// Block is invalid if there are any discrepencies.
-		apply_block_to_txhashset(b, ext, batch)?;
+			// Apply the block to the txhashset state.
+			// Validate the txhashset roots and sizes against the block header.
+			// Block is invalid if there are any discrepencies.
+			apply_block_to_txhashset(b, ext, batch)?;
 
-		// If applying this block does not increase the work on the chain then
-		// we know we have not yet updated the chain to produce a new chain head.
-		// We discard the "child" batch used in this extension (original ctx batch still active).
-		// We discard any MMR modifications applied in this extension.
-		let head = batch.head()?;
-		if !has_more_work(&b.header, &head) {
-			ext.extension.force_rollback();
-		}
+			// If applying this block does not increase the work on the chain then
+			// we know we have not yet updated the chain to produce a new chain head.
+			// We discard the "child" batch used in this extension (original ctx batch still active).
+			// We discard any MMR modifications applied in this extension.
+			let head = batch.head()?;
+			if !has_more_work(&b.header, &head) {
+				ext.extension.force_rollback();
+			}
 
-		Ok(fork_point)
-	})?;
+			Ok(fork_point)
+		},
+	)?;
+
+	// Now that the block has been officially added, we update bitvecs with btc claims
+	update_btc_utxo_bitvec(b, utxo_data, &fork_point, &head, batch)?;
 
 	// Add the validated block to the db.
 	// Note we do this in the outer batch, not the child batch from the extension
 	// as we only commit the child batch if the extension increases total work.
 	// We want to save the block to the db regardless.
-	add_block(b, &ctx.batch)?;
-
-	// Now that the block has been officially added, we update bitvecs with btc claims
-	// TODO: must be done on appropriate fork, for now just one
-	update_btc_utxo_bitvec(b, utxo_data, &fork_point, &head)?;
+	add_block(b, batch)?;
 
 	// If we have no "tail" then set it now.
 	if ctx.batch.tail().is_err() {
@@ -424,10 +433,18 @@ fn validate_header(header: &BlockHeader, ctx: &mut BlockContext<'_>) -> Result<(
 	Ok(())
 }
 
-fn validate_block(block: &Block, ctx: &mut BlockContext<'_>) -> Result<(), Error> {
+fn validate_block(
+	block: &Block,
+	ctx: &mut BlockContext<'_>,
+	utxo_data: Option<Weak<RwLock<UtxoData>>>,
+) -> Result<(), Error> {
 	let prev = ctx.batch.get_previous_header(&block.header)?;
 	block
-		.validate(&prev.total_kernel_offset, ctx.verifier_cache.clone())
+		.validate(
+			&prev.total_kernel_offset,
+			ctx.verifier_cache.clone(),
+			utxo_data,
+		)
 		.map_err(ErrorKind::InvalidBlockProof)?;
 	Ok(())
 }
@@ -448,13 +465,17 @@ fn verify_coinbase_maturity(
 /// Verify kernel sums across the full utxo and kernel sets based on block_sums
 /// of previous block accounting for the inputs|outputs|kernels of the new block.
 /// Saves the new block_sums to the db via the current batch if successful.
-fn verify_block_sums(b: &Block, batch: &store::Batch<'_>) -> Result<(), Error> {
+fn verify_block_sums(
+	b: &Block,
+	batch: &store::Batch<'_>,
+	utxo_data: Option<Weak<RwLock<UtxoData>>>,
+) -> Result<(), Error> {
 	// Retrieve the block_sums for the previous block.
 	let block_sums = batch.get_block_sums(&b.header.prev_hash)?;
 
 	// Overage is based purely on the new block.
 	// Previous block_sums have taken all previous overage into account.
-	let overage = b.overage();
+	let overage = b.overage(utxo_data);
 
 	// Offset on the other hand is the total kernel offset from the new block.
 	let offset = b.header.total_kernel_offset();
@@ -536,7 +557,7 @@ fn update_head(head: &Tip, batch: &mut store::Batch<'_>) -> Result<(), Error> {
 	Ok(())
 }
 
-// Whether the provided block totals more work than the chain tip
+/// Whether the provided block totals more work than the chain tip
 fn has_more_work(header: &BlockHeader, head: &Tip) -> bool {
 	header.total_difficulty() > head.total_difficulty
 }
@@ -580,7 +601,9 @@ pub fn rewind_and_apply_header_fork(
 pub fn rewind_and_apply_fork(
 	header: &BlockHeader,
 	ext: &mut txhashset::ExtensionPair<'_>,
+	verifier: Arc<RwLock<dyn VerifierCache>>,
 	batch: &store::Batch<'_>,
+	utxo_data: Option<Weak<RwLock<UtxoData>>>,
 ) -> Result<BlockHeader, Error> {
 	let extension = &mut ext.extension;
 	let header_extension = &mut ext.header_extension;
@@ -618,9 +641,9 @@ pub fn rewind_and_apply_fork(
 		// Re-verify coinbase maturity along this fork.
 		verify_coinbase_maturity(&fb, ext, batch)?;
 		// Validate the block against the UTXO set.
-		validate_utxo(&fb, ext, batch)?;
+		validate_utxo(&fb, ext, verifier.clone(), batch)?;
 		// Re-verify block_sums to set the block_sums up on this fork correctly.
-		verify_block_sums(&fb, batch)?;
+		verify_block_sums(&fb, batch, utxo_data.clone())?;
 		// Re-apply the blocks.
 		apply_block_to_txhashset(&fb, ext, batch)?;
 	}
@@ -628,69 +651,246 @@ pub fn rewind_and_apply_fork(
 	Ok(fork_point)
 }
 
+/// rewind a bitvec to the fork point. Update any BTCClaims that are affected.
+fn rewind_btc_bitvec(
+	mut bitvec: BitVec,
+	fork_point: &BlockHeader,
+	head: &Tip,
+	_bheader: &BlockHeader,
+	batch: &store::Batch<'_>,
+) -> Result<BitVec, Error> {
+	// get current head
+	let mut current = batch.get_block(&head.last_block_h)?.header;
+	// create a vec of the fork_hashes between current head and fork_point
+	let mut fork_hashes = vec![];
+	while current.height > fork_point.height {
+		fork_hashes.push(current.hash());
+		current = batch.get_previous_header(&current)?;
+	}
+	fork_hashes.reverse();
+
+	// iterate through each hash
+	for h in fork_hashes {
+		let fb = batch
+			.get_block(&h)
+			.map_err(|e| ErrorKind::StoreErr(e, "getting forked blocks".to_string()))?;
+		for k in fb.kernels() {
+			match k.features {
+				KernelFeatures::BTCClaim { index, .. } => {
+					// set any BTCClaims to false because they were on another chain
+					bitvec.set(index.try_into()?, false);
+				}
+				_ => {}
+			}
+		}
+	}
+
+	Ok(bitvec)
+}
+
+/// Apply the fork blocks to the bitvec starting at the fork_point.
+fn apply_fork_btc_bitvec(
+	mut bitvec: BitVec,
+	fork_point: &BlockHeader,
+	_head: &Tip,
+	bheader: &BlockHeader,
+	batch: &store::Batch<'_>,
+) -> Result<BitVec, Error> {
+	// get the current header
+	let mut current = bheader.clone();
+	// get all fork hashes of the blocks from fork_point to this block
+	let mut fork_hashes = vec![];
+
+	// don't look at current header, rewind by one
+	current = batch.get_previous_header(&current)?;
+
+	while current.height > fork_point.height {
+		fork_hashes.push(current.hash());
+		current = batch.get_previous_header(&current)?;
+	}
+	// reverse the vec
+	fork_hashes.reverse();
+
+	// iterate through the fork_hashes and check each BTCClaim, update bitvec
+	for h in fork_hashes {
+		let fb = batch
+			.get_block(&h)
+			.map_err(|e| ErrorKind::StoreErr(e, "getting forked blocks".to_string()))?;
+		for k in fb.kernels() {
+			match k.features {
+				KernelFeatures::BTCClaim { index, .. } => {
+					bitvec.set(index.try_into()?, true);
+				}
+				_ => {}
+			}
+		}
+	}
+
+	// return updated bitvec
+	Ok(bitvec)
+}
+
+/// Rewind the block to the fork point and apply the new blocks of the fork
+/// to the bitvec so an accurate answer as to whether or not the BTClaim has
+/// already been made on this chain.
+fn rewind_and_apply_fork_btc_bitvec(
+	utxo_data: Option<Weak<RwLock<UtxoData>>>,
+	fork_point: &BlockHeader,
+	head: &Tip,
+	bheader: &BlockHeader,
+	batch: &store::Batch<'_>,
+) -> Result<BitVec, Error> {
+	if utxo_data.is_none() {
+		// if no utxo_data (like in tests), we return an empty bitvec.
+		return Ok(BitVec::new());
+	}
+
+	// safely get the utxo_data struct.
+	let utxo_data = utxo_data
+		.as_ref()
+		.ok_or(Error::from(ErrorKind::NoneError))?
+		.upgrade()
+		.ok_or(Error::from(ErrorKind::NoneError))?;
+	let utxo_data = utxo_data.write();
+	let bitvec = &*utxo_data.claims_bitmap.lock()?;
+
+	// if this is the next header on the chain, return the bitvec as no adjustments needed
+	if has_more_work(bheader, &head) {
+		if bheader.prev_hash == head.hash() {
+			return Ok(bitvec.clone());
+		}
+	}
+
+	// rewind the bitvec to fork point
+	let bitvec = rewind_btc_bitvec(bitvec.clone(), fork_point, head, bheader, batch)?;
+
+	// apply the fork headers to the bitvec
+	let bitvec = apply_fork_btc_bitvec(bitvec, fork_point, head, bheader, batch)?;
+	Ok(bitvec)
+}
+
+/// Update the bitvec if this is a new tip of the chain
 fn update_btc_utxo_bitvec(
 	b: &Block,
-	utxo_data: Option<&Weak<UtxoData>>,
-	_fork_point: &BlockHeader,
-	_head: &Tip,
+	utxo_data: Option<Weak<RwLock<UtxoData>>>,
+	fork_point: &BlockHeader,
+	head: &Tip,
+	batch: &store::Batch<'_>,
 ) -> Result<(), Error> {
 	if utxo_data.is_none() {
 		return Ok(());
 	}
 
-	let utxo_data = &*utxo_data.unwrap();
-	let utxo_data = utxo_data.upgrade().unwrap();
+	// We only update the bitvec if there's more work here.
+	if has_more_work(&b.header, &head) {
+		// get the appropriate bitvec
+		let bitslice = &mut *rewind_and_apply_fork_btc_bitvec(
+			utxo_data.clone(),
+			fork_point,
+			head,
+			&b.header,
+			batch,
+		)?;
 
-	// we use a mutex because there are two threads that can access this and we write
-	let mut bitvecs = utxo_data.claims_bitmaps.lock().unwrap();
-	let bitvec = bitvecs.get_mut("head").unwrap();
-	for kernel in &b.body.kernels {
-		match kernel.features {
-			KernelFeatures::BitcoinInit { index, .. } => {
-				(*bitvec).insert(index.try_into().unwrap_or(0), true);
+		// iterate through kernels in the block and update the bitvec with any BTCClaims
+		for kernel in &b.body.kernels {
+			match kernel.features {
+				KernelFeatures::BTCClaim { index, .. } => {
+					// if we have an index in our bitmap update it.
+					bitslice.set(index.try_into()?, true);
+				}
+				_ => {}
 			}
-			_ => {}
 		}
+
+		// safely get the utxo_data struct.
+		let utxo_data = utxo_data
+			.as_ref()
+			.ok_or(Error::from(ErrorKind::NoneError))?
+			.upgrade()
+			.ok_or(Error::from(ErrorKind::NoneError))?;
+		let utxo_data = utxo_data.write();
+
+		// get the claims bitmap
+		let cmap = &mut *utxo_data.claims_bitmap.lock()?;
+		// replace in memory the bitmap
+		let _ = replace(cmap, (*bitslice).to_bitvec());
 	}
 
 	Ok(())
 }
 
+/// Validate the btc utxos in the claims. Ensure no duplicates.
 fn validate_btc_utxos(
 	b: &Block,
-	utxo_data: Option<&Weak<UtxoData>>,
-	_fork_point: &BlockHeader,
-	_head: &Tip,
+	utxo_data: Option<Weak<RwLock<UtxoData>>>,
+	fork_point: &BlockHeader,
+	head: &Tip,
+	batch: &store::Batch<'_>,
 ) -> Result<(), Error> {
+	// if we have no utxo_data (as in some tests), we must continue processing.
 	if utxo_data.is_none() {
 		return Ok(());
 	}
 
-	let utxo_data = &*utxo_data.unwrap();
-	let utxo_data = utxo_data.upgrade().unwrap();
+	// get the correct bitslice which is adjusted for forks
+	let bitslice = &mut *rewind_and_apply_fork_btc_bitvec(
+		utxo_data.clone(),
+		fork_point,
+		head,
+		&b.header,
+		batch,
+	)?;
 
-	// we use a mutex because there are two threads that can access this and we write
-	let mut bitvecs = utxo_data.claims_bitmaps.lock().unwrap();
-	let bitvec = bitvecs.get_mut("head").unwrap();
+	// safely get the utxo_data struct.
+	let utxo_data = utxo_data
+		.as_ref()
+		.ok_or(Error::from(ErrorKind::NoneError))?
+		.upgrade()
+		.ok_or(Error::from(ErrorKind::NoneError))?;
+	let utxo_data = utxo_data.read();
+
+	// create an index map to ensure this block does not have two of the same Claims in it
 	let mut index_map: HashMap<u32, bool> = HashMap::new();
+
+	// iterate through each kernel in this block.
 	for kernel in &b.body.kernels {
 		match kernel.features {
-			KernelFeatures::BitcoinInit { index, .. } => {
-				if *bitvec.get(index.try_into().unwrap_or(0)).unwrap() {
+			KernelFeatures::BTCClaim { index, .. } => {
+				// only check BTCClaims
+				let index_usize: usize = index.try_into()?;
+				let index_u32: u32 = index.try_into()?;
+
+				// if this index is greater than the size of the bitmap, return error
+				if index_usize >= (*bitslice).len() {
+					return Err(ErrorKind::Unfit(format!("Invalid index for BTCClaim")).into());
+				}
+
+				let found = (*bitslice).get(index_usize);
+				// If nothing is found there's something wrong, return error.
+				if found.is_none() {
+					return Err(ErrorKind::Unfit(format!("Invalid index for BTCClaim")).into());
+				}
+
+				// if it is found and it's true, that means it's already claimed. Return error.
+				if *found.unwrap() {
 					return Err(ErrorKind::Unfit(format!(
 						"BTC address [{:?}] has already been claimed",
-						utxo_data.map.get(&index)
+						utxo_data.get_address(index_u32)
 					))
 					.into());
 				}
 
-				if index_map.get(&index).is_some() {
+				// if it's found in the index_map, this block already has this index. Return error.
+				if index_map.get(&index_u32).is_some() {
 					return Err(ErrorKind::Unfit(format!(
 						"BTC address [{:?}] found twice in this block",
-						utxo_data.map.get(&index)
+						utxo_data.get_address(index_u32)
 					))
 					.into());
 				}
+
+				// Insert the index into the map to detect later duplicates in the block
 				index_map.insert(index, true);
 			}
 			_ => {}
@@ -706,11 +906,12 @@ fn validate_btc_utxos(
 fn validate_utxo(
 	block: &Block,
 	ext: &mut txhashset::ExtensionPair<'_>,
+	verifier: Arc<RwLock<dyn VerifierCache>>,
 	batch: &store::Batch<'_>,
 ) -> Result<Vec<(OutputIdentifier, CommitPos)>, Error> {
 	let extension = &ext.extension;
 	let header_extension = &ext.header_extension;
 	extension
 		.utxo_view(header_extension)
-		.validate_block(block, batch)
+		.validate_block(block, verifier, batch)
 }

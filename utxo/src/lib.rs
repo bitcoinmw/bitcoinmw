@@ -17,5 +17,8 @@
 #[macro_use]
 extern crate log;
 
-pub mod loader;
-mod types;
+use failure;
+
+pub mod error;
+pub mod utxo_constants;
+pub mod utxo_data;

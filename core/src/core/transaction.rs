@@ -14,17 +14,29 @@
 
 //! Transactions
 
-use crate::core::hash::{DefaultHashable, Hashed};
+use crate::core::hash::{DefaultHashable, Hash, Hashed};
 use crate::core::verifier_cache::VerifierCache;
 use crate::core::{committed, Committed};
 use crate::libtx::{aggsig, secp_ser};
 use crate::ser::{
-	self, read_multi, PMMRable, ProtocolVersion, Readable, Reader, VerifySortedAndUnique,
-	Writeable, Writer,
+	self, read_multi, PMMRable, Readable, Reader, VerifySortedAndUnique, Writeable, Writer,
 };
 use crate::{consensus, global};
-use bitcoin::secp256k1::recovery::RecoverableSignature;
 use bitcoin::secp256k1::recovery::RecoveryId;
+use bitcoin::secp256k1::{Message, Secp256k1};
+use bitcoin::util::key::PublicKey as BitcoinPublicKey;
+use bitcoin::util::misc;
+use bitcoin::{Address, Script};
+use std::collections::HashMap;
+
+use bitcoin::blockdata::opcodes::all::*;
+use bitcoin::blockdata::script::Instruction::Op;
+use bitcoin::blockdata::script::Instruction::PushBytes;
+use bitcoin::network::constants::Network::Bitcoin;
+use bitcoin::secp256k1::recovery::RecoverableSignature;
+use bitcoin::secp256k1::Signature;
+use bmw_utxo::utxo_data::UtxoData;
+use byte_tools::copy;
 use enum_primitive::FromPrimitive;
 use keychain::{self, BlindingFactor};
 use serde::de;
@@ -33,13 +45,19 @@ use std::cmp::Ordering;
 use std::cmp::{max, min};
 use std::convert::{TryFrom, TryInto};
 use std::fmt::Display;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use std::{error, fmt};
 use util::secp;
+use util::secp::key::PublicKey;
 use util::secp::pedersen::{Commitment, RangeProof};
+use util::secp::ContextFlag;
+use util::secp::Signature as SecpSignature;
 use util::static_secp_instance;
 use util::RwLock;
 use util::ToHex;
+use util::P2SH;
+use util::P2SHWSH;
+use util::P2WSH;
 
 /// Fee fields as in fix-fees RFC: { future_use: 20, fee_shift: 4, fee: 40 }
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -267,6 +285,253 @@ impl NRDRelativeHeight {
 	}
 }
 
+/// Structure to hold the notarization data (limit 40 bytes)
+#[derive(Clone, Copy)]
+pub struct NotarizationData {
+	/// Data to notarize. Must be exactly 40 bytes.
+	pub data: [u8; 40],
+}
+
+impl DefaultHashable for NotarizationData {}
+hashable_ord!(NotarizationData);
+
+impl Writeable for NotarizationData {
+	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), ser::Error> {
+		for i in 0..40 {
+			self.data[i].write(writer)?;
+		}
+		Ok(())
+	}
+}
+
+impl fmt::Debug for NotarizationData {
+	fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+		std::fmt::Display::fmt(
+			&format!("NotizationData({})", self.data.to_hex()),
+			formatter,
+		)
+	}
+}
+
+impl Serialize for NotarizationData {
+	fn serialize<S>(&self, s: S) -> Result<S::Ok, S::Error>
+	where
+		S: Serializer,
+	{
+		self.data.to_vec().to_hex().serialize(s)
+	}
+}
+
+struct NotarizationDataVisitor;
+
+impl<'di> de::Visitor<'di> for NotarizationDataVisitor {
+	type Value = NotarizationData;
+
+	fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+		formatter.write_str("a byte array")
+	}
+
+	fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+	where
+		E: de::Error,
+	{
+		let data_vec =
+			util::from_hex(value).map_err(|_| E::custom(format!("notarization format invalid")))?;
+		let mut data = [0 as u8; 40];
+		for i in 0..40 {
+			data[i] = data_vec[i];
+		}
+		Ok(NotarizationData { data })
+	}
+}
+
+impl<'de> de::Deserialize<'de> for NotarizationData {
+	fn deserialize<D>(d: D) -> Result<NotarizationData, D::Error>
+	where
+		D: de::Deserializer<'de>,
+	{
+		// Begin actual function
+		d.deserialize_string(NotarizationDataVisitor)
+	}
+}
+
+impl AsRef<[u8]> for NotarizationData {
+	fn as_ref(&self) -> &[u8] {
+		&self.data[..]
+	}
+}
+
+/// Structure to hold the BTC signature
+#[derive(Clone, Copy)]
+pub struct BTCSignature {
+	/// The signature for this BTC Claim
+	pub signature: [u8; 65],
+}
+
+impl fmt::Debug for BTCSignature {
+	fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+		std::fmt::Display::fmt(
+			&format!(
+				"Signature({})",
+				&self.signature[..].to_vec().to_hex().to_string()
+			),
+			formatter,
+		)
+	}
+}
+
+impl PartialEq for BTCSignature {
+	fn eq(&self, other: &Self) -> bool {
+		for i in 0..65 {
+			if self.signature[i] != other.signature[i] {
+				return false;
+			}
+		}
+		return true;
+	}
+}
+
+impl Serialize for BTCSignature {
+	fn serialize<S>(&self, s: S) -> Result<S::Ok, S::Error>
+	where
+		S: Serializer,
+	{
+		self.signature.to_vec().to_hex().serialize(s)
+	}
+}
+
+struct BTCSignatureVisitor;
+
+impl<'di> de::Visitor<'di> for BTCSignatureVisitor {
+	type Value = BTCSignature;
+
+	fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+		formatter.write_str("a string")
+	}
+
+	fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+	where
+		E: de::Error,
+	{
+		let signature_vec =
+			util::from_hex(value).map_err(|_| E::custom(format!("signature format invalid")))?;
+		let mut signature = [0 as u8; 65];
+		for i in 0..65 {
+			signature[i] = signature_vec[i];
+		}
+		Ok(BTCSignature { signature })
+	}
+}
+
+impl<'de> de::Deserialize<'de> for BTCSignature {
+	fn deserialize<D>(d: D) -> Result<BTCSignature, D::Error>
+	where
+		D: de::Deserializer<'de>,
+	{
+		// Begin actual function
+		d.deserialize_string(BTCSignatureVisitor)
+	}
+}
+
+impl AsRef<[u8]> for BTCSignature {
+	fn as_ref(&self) -> &[u8] {
+		&self.signature[..]
+	}
+}
+
+/// The BTC Redeem script
+#[derive(Clone, Copy)]
+pub struct RedeemScript {
+	/// The data for this redeem script
+	pub data: [u8; 520],
+	/// The length of data for this redeem script
+	pub len: usize,
+}
+
+impl fmt::Debug for RedeemScript {
+	fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+		let len = if self.len < 520 { self.len } else { 520 };
+		std::fmt::Display::fmt(
+			&format!(
+				"RedeemScript({})",
+				&self.data[..len].to_vec().to_hex().to_string()
+			),
+			formatter,
+		)
+	}
+}
+
+impl PartialEq for RedeemScript {
+	fn eq(&self, other: &Self) -> bool {
+		let len = if self.len < 520 { self.len } else { 520 };
+		for i in 0..len {
+			if self.data[i] != other.data[i] {
+				return false;
+			}
+		}
+		return true;
+	}
+}
+
+impl Serialize for RedeemScript {
+	fn serialize<S>(&self, s: S) -> Result<S::Ok, S::Error>
+	where
+		S: Serializer,
+	{
+		let len = if self.len < 520 { self.len } else { 520 };
+		self.data[..len].to_vec().to_hex().serialize(s)
+	}
+}
+
+struct RedeemScriptVisitor;
+
+impl<'di> de::Visitor<'di> for RedeemScriptVisitor {
+	type Value = RedeemScript;
+
+	fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+		formatter.write_str("a string")
+	}
+
+	fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+	where
+		E: de::Error,
+	{
+		let data_vec = util::from_hex(value).map_err(|_| E::custom(format!("redeem not valid")))?;
+
+		// we have a fixed length of 520 for serialization purposes and then we specify the 'len'
+		let mut data = [0 as u8; 520];
+		let data_vec_len = data_vec.len();
+		let len = if data_vec_len < 520 {
+			data_vec_len
+		} else {
+			520
+		};
+		for i in 0..len {
+			data[i] = data_vec[i];
+		}
+		Ok(RedeemScript {
+			data,
+			len: data_vec.len(),
+		})
+	}
+}
+
+impl<'de> de::Deserialize<'de> for RedeemScript {
+	fn deserialize<D>(d: D) -> Result<RedeemScript, D::Error>
+	where
+		D: de::Deserializer<'de>,
+	{
+		// Begin actual function
+		d.deserialize_string(RedeemScriptVisitor)
+	}
+}
+
+impl AsRef<[u8]> for RedeemScript {
+	fn as_ref(&self) -> &[u8] {
+		&self.data[..]
+	}
+}
+
 /// Various tx kernel variants.
 #[derive(Clone, PartialEq, Serialize, Deserialize, Debug)]
 pub enum KernelFeatures {
@@ -277,7 +542,10 @@ pub enum KernelFeatures {
 		fee: FeeFields,
 	},
 	/// A coinbase kernel.
-	Coinbase,
+	Coinbase {
+		/// Coinbase can add 40 bytes of additional data to be persisted in the blockchain.
+		notarization_data: NotarizationData,
+	},
 	/// A kernel with an explicit lock height (and fee).
 	HeightLocked {
 		/// Height locked kernels have fees.
@@ -294,138 +562,120 @@ pub enum KernelFeatures {
 		/// Relative lock height.
 		relative_height: NRDRelativeHeight,
 	},
-	/// Initialization of a Bitcoin UTXO.
-	BitcoinInit {
+	/// Process a BTC Claim
+	BTCClaim {
 		/// These have fees.
 		#[serde(serialize_with = "fee_fields_as_int")]
 		fee: FeeFields,
 		/// Index into the UTXO data array
 		index: u32,
-		/// Amount in NanoBMWs
+		/// The BTC Signature(s)
+		btc_signatures: Vec<BTCSignature>,
+		/// Redeem script for p2sh and p2wsh
+		redeem_script: Option<RedeemScript>,
+		/// address type
+		address_type: u8,
+	},
+	/// Burn Kernel feature - provably burned amount specified
+	Burn {
+		/// Burn kernels have fees.
+		#[serde(serialize_with = "fee_fields_as_int")]
+		fee: FeeFields,
+		/// amount burned by this kernel
 		amount: u64,
-		/// Signature of (excess, excess_sig, index, and fee) with btc key. p1
-		btc_sig_part1: u64,
-		/// Signature of (excess, excess_sig, index, and fee) with btc key. p2
-		btc_sig_part2: u64,
-		/// Signature of (excess, excess_sig, index, and fee) with btc key. p3
-		btc_sig_part3: u64,
-		/// Signature of (excess, excess_sig, index, and fee) with btc key. p4
-		btc_sig_part4: u64,
-		/// Signature of (excess, excess_sig, index, and fee) with btc key. p5
-		btc_sig_part5: u64,
-		/// Signature of (excess, excess_sig, index, and fee) with btc key. p6
-		btc_sig_part6: u64,
-		/// Signature of (excess, excess_sig, index, and fee) with btc key. p7
-		btc_sig_part7: u64,
-		/// Signature of (excess, excess_sig, index, and fee) with btc key. p8
-		btc_sig_part8: u64,
-
-		/// Signature of (excess, excess_sig, index, and fee) with btc key. rec bit
-		btc_recovery_bit: u8,
 	},
 }
 
-/// Create a BitcoinInit Kernel Feature based on inputs
+/// Create a BTCClaim Kernel Feature based on inputs
 pub fn build_btc_init_kernel_feature(
 	fee: FeeFields,
 	index: u32,
-	amount: u64,
-	btc_sig: RecoverableSignature,
-	btc_recovery_bit: u8,
-) -> Result<KernelFeatures, Error> {
-	let (_rec_id, data) = btc_sig.serialize_compact();
+	btc_sigs: Vec<RecoverableSignature>,
+	btc_recovery_bytes: Vec<u8>,
+	redeem_script: Option<RedeemScript>,
+	address_type: u8,
+) -> Result<KernelFeatures, self::Error> {
+	let mut i = 0; // counter
+	let mut btc_signatures = Vec::new();
+	for btc_sig in btc_sigs {
+		// get the compact version of each sig
+		let (_rec_id, data) = btc_sig.serialize_compact();
 
-	let mut tmp = [0 as u8; 8];
+		let mut signature = [0 as u8; 65];
+		// use specified recovery_byte
+		let recovery_byte = btc_recovery_bytes.get(i);
+		if recovery_byte.is_none() {
+			return Err(Error::RecoveryByteNotFound);
+		}
+		let recovery_byte = *recovery_byte.unwrap();
+		signature[0] = recovery_byte;
+		// copy the data over
+		signature[1..].clone_from_slice(&data);
+		// insert into the list
+		btc_signatures.insert(i, BTCSignature { signature });
+		i = i + 1;
+	}
 
-	tmp.clone_from_slice(&data[0..8]);
-	let btc_sig_part1 = u64::from_le_bytes(tmp);
-
-	tmp.clone_from_slice(&data[8..16]);
-	let btc_sig_part2 = u64::from_le_bytes(tmp);
-
-	tmp.clone_from_slice(&data[16..24]);
-	let btc_sig_part3 = u64::from_le_bytes(tmp);
-
-	tmp.clone_from_slice(&data[24..32]);
-	let btc_sig_part4 = u64::from_le_bytes(tmp);
-
-	tmp.clone_from_slice(&data[32..40]);
-	let btc_sig_part5 = u64::from_le_bytes(tmp);
-
-	tmp.clone_from_slice(&data[40..48]);
-	let btc_sig_part6 = u64::from_le_bytes(tmp);
-
-	tmp.clone_from_slice(&data[48..56]);
-	let btc_sig_part7 = u64::from_le_bytes(tmp);
-
-	tmp.clone_from_slice(&data[56..64]);
-	let btc_sig_part8 = u64::from_le_bytes(tmp);
-
-	Ok(KernelFeatures::BitcoinInit {
+	Ok(KernelFeatures::BTCClaim {
 		fee,
 		index,
-		amount,
-		btc_sig_part1,
-		btc_sig_part2,
-		btc_sig_part3,
-		btc_sig_part4,
-		btc_sig_part5,
-		btc_sig_part6,
-		btc_sig_part7,
-		btc_sig_part8,
-		btc_recovery_bit,
+		btc_signatures,
+		redeem_script,
+		address_type,
 	})
 }
 
-/// Get a RecoverableSignature from KernelFeatures::BitcoinInit
+/// Get a RecoverableSignature from KernelFeatures::BTCClaim
 pub fn get_recoverable_signature(
 	kf: KernelFeatures,
-) -> Result<RecoverableSignature, bitcoin::secp256k1::Error> {
+	index: usize,
+) -> Result<(u8, RecoverableSignature), bitcoin::secp256k1::Error> {
 	match kf {
-		KernelFeatures::BitcoinInit {
-			fee: _,
-			index: _,
-			amount: _,
-			btc_sig_part1,
-			btc_sig_part2,
-			btc_sig_part3,
-			btc_sig_part4,
-			btc_sig_part5,
-			btc_sig_part6,
-			btc_sig_part7,
-			btc_sig_part8,
-			btc_recovery_bit,
-		} => {
+		KernelFeatures::BTCClaim { btc_signatures, .. } => {
 			let mut data = [0 as u8; 64];
+			// get the signature of the specified index
+			let signature = btc_signatures.get(index);
+			if signature.is_none() {
+				return Err(bitcoin::secp256k1::Error::InvalidSignature);
+			}
 
-			let tmp = btc_sig_part1.to_le_bytes();
-			data[0..8].clone_from_slice(&tmp);
+			let signature = signature.unwrap().signature;
 
-			let tmp = btc_sig_part2.to_le_bytes();
-			data[8..16].clone_from_slice(&tmp);
+			// get the recovery_id
+			let rec_id = (signature[0] - 27) & 3;
+			copy(&signature[1..], &mut data);
 
-			let tmp = btc_sig_part3.to_le_bytes();
-			data[16..24].clone_from_slice(&tmp);
-
-			let tmp = btc_sig_part4.to_le_bytes();
-			data[24..32].clone_from_slice(&tmp);
-
-			let tmp = btc_sig_part5.to_le_bytes();
-			data[32..40].clone_from_slice(&tmp);
-
-			let tmp = btc_sig_part6.to_le_bytes();
-			data[40..48].clone_from_slice(&tmp);
-
-			let tmp = btc_sig_part7.to_le_bytes();
-			data[48..56].clone_from_slice(&tmp);
-
-			let tmp = btc_sig_part8.to_le_bytes();
-			data[56..64].clone_from_slice(&tmp);
-
-			let rec_id = (btc_recovery_bit - 27) & 3;
-
+			// build recoverable signature
 			match RecoveryId::from_i32(rec_id.into()) {
-				Ok(r) => RecoverableSignature::from_compact(&data, r),
+				Ok(r) => Ok((signature[0], RecoverableSignature::from_compact(&data, r)?)),
+				Err(_) => Err(bitcoin::secp256k1::Error::InvalidMessage),
+			}
+		}
+		_ => Err(bitcoin::secp256k1::Error::InvalidMessage),
+	}
+}
+
+/// Get the Signature from the specified index
+pub fn get_signature(
+	kf: KernelFeatures,
+	index: usize,
+) -> Result<Signature, bitcoin::secp256k1::Error> {
+	match kf {
+		KernelFeatures::BTCClaim { btc_signatures, .. } => {
+			//let mut data = [0 as u8; 64];
+			// get the signature of the specified index
+			let signature = btc_signatures.get(index);
+			if signature.is_none() {
+				return Err(bitcoin::secp256k1::Error::InvalidSignature);
+			}
+
+			let signature = signature.unwrap().signature;
+
+			let rec_id = (signature[0] - 27) & 3;
+
+			// build recoverable signature
+			match RecoveryId::from_i32(rec_id.into()) {
+				Ok(r) => Ok(RecoverableSignature::from_compact(&signature[1..], r)?.to_standard()),
 				Err(_) => Err(bitcoin::secp256k1::Error::InvalidMessage),
 			}
 		}
@@ -438,17 +688,19 @@ impl KernelFeatures {
 	const COINBASE_U8: u8 = 1;
 	const HEIGHT_LOCKED_U8: u8 = 2;
 	const NO_RECENT_DUPLICATE_U8: u8 = 3;
-	const BITCOIN_INIT_U8: u8 = 4;
+	const BTCCLAIM_U8: u8 = 4;
+	const BURN_U8: u8 = 5;
 
 	/// Underlying (u8) value representing this kernel variant.
 	/// This is the first byte when we serialize/deserialize the kernel features.
 	pub fn as_u8(&self) -> u8 {
 		match self {
 			KernelFeatures::Plain { .. } => KernelFeatures::PLAIN_U8,
-			KernelFeatures::Coinbase => KernelFeatures::COINBASE_U8,
+			KernelFeatures::Coinbase { .. } => KernelFeatures::COINBASE_U8,
 			KernelFeatures::HeightLocked { .. } => KernelFeatures::HEIGHT_LOCKED_U8,
 			KernelFeatures::NoRecentDuplicate { .. } => KernelFeatures::NO_RECENT_DUPLICATE_U8,
-			KernelFeatures::BitcoinInit { .. } => KernelFeatures::BITCOIN_INIT_U8,
+			KernelFeatures::BTCClaim { .. } => KernelFeatures::BTCCLAIM_U8,
+			KernelFeatures::Burn { .. } => KernelFeatures::BURN_U8,
 		}
 	}
 
@@ -456,10 +708,11 @@ impl KernelFeatures {
 	pub fn as_string(&self) -> String {
 		match self {
 			KernelFeatures::Plain { .. } => String::from("Plain"),
-			KernelFeatures::Coinbase => String::from("Coinbase"),
+			KernelFeatures::Coinbase { .. } => String::from("Coinbase"),
 			KernelFeatures::HeightLocked { .. } => String::from("HeightLocked"),
 			KernelFeatures::NoRecentDuplicate { .. } => String::from("NoRecentDuplicate"),
-			KernelFeatures::BitcoinInit { .. } => String::from("BitcoinInit"),
+			KernelFeatures::BTCClaim { .. } => String::from("BTCClaim"),
+			KernelFeatures::Burn { .. } => String::from("Burn"),
 		}
 	}
 
@@ -467,18 +720,19 @@ impl KernelFeatures {
 	///       hash(features || fee_fields)                    for plain kernels
 	///       hash(features || fee_fields || lock_height)     for height locked kernels
 	///       hash(features || fee_fields || relative_height) for NRD kernels
-	///       hash(features || fee_fields || index)           for BitcoinInit kernels
+	///       hash(features || fee_fields || index)           for BTCClaim kernels
 	pub fn kernel_sig_msg(&self) -> Result<secp::Message, Error> {
 		let x = self.as_u8();
 		let hash = match self {
 			KernelFeatures::Plain { fee } => (x, fee).hash(),
-			KernelFeatures::Coinbase => x.hash(),
+			KernelFeatures::Coinbase { notarization_data } => (x, notarization_data).hash(),
 			KernelFeatures::HeightLocked { fee, lock_height } => (x, fee, lock_height).hash(),
 			KernelFeatures::NoRecentDuplicate {
 				fee,
 				relative_height,
 			} => (x, fee, relative_height).hash(),
-			KernelFeatures::BitcoinInit { fee, index, .. } => (x, fee, *index as u64).hash(),
+			KernelFeatures::BTCClaim { fee, index, .. } => (x, fee, *index as u64).hash(),
+			KernelFeatures::Burn { fee, amount } => (x, fee, amount).hash(),
 		};
 
 		let msg = secp::Message::from_slice(&hash.as_bytes())?;
@@ -496,8 +750,10 @@ impl KernelFeatures {
 				// Fee only, no additional data on plain kernels.
 				fee.write(writer)?;
 			}
-			KernelFeatures::Coinbase => {
-				// No additional data.
+			KernelFeatures::Coinbase { notarization_data } => {
+				for i in 0..40 {
+					writer.write_u8(notarization_data.data[i])?;
+				}
 			}
 			KernelFeatures::HeightLocked { fee, lock_height } => {
 				fee.write(writer)?;
@@ -512,32 +768,47 @@ impl KernelFeatures {
 				// V2 NRD kernels use 2 bytes for the relative lock height.
 				relative_height.write(writer)?;
 			}
-			KernelFeatures::BitcoinInit {
+			KernelFeatures::BTCClaim {
 				fee,
 				index,
-				amount,
-				btc_sig_part1,
-				btc_sig_part2,
-				btc_sig_part3,
-				btc_sig_part4,
-				btc_sig_part5,
-				btc_sig_part6,
-				btc_sig_part7,
-				btc_sig_part8,
-				btc_recovery_bit,
+				btc_signatures,
+				redeem_script,
+				address_type,
 			} => {
 				fee.write(writer)?;
 				index.write(writer)?;
-				amount.write(writer)?;
-				btc_sig_part1.write(writer)?;
-				btc_sig_part2.write(writer)?;
-				btc_sig_part3.write(writer)?;
-				btc_sig_part4.write(writer)?;
-				btc_sig_part5.write(writer)?;
-				btc_sig_part6.write(writer)?;
-				btc_sig_part7.write(writer)?;
-				btc_sig_part8.write(writer)?;
-				btc_recovery_bit.write(writer)?;
+				let len_u32: Result<u32, _> = btc_signatures.len().try_into();
+				if len_u32.is_err() {
+					return Err(ser::Error::TooLargeReadErr);
+				}
+				let len_u32 = len_u32.unwrap();
+				len_u32.write(writer)?;
+
+				// write each of the signatures
+				for sig in btc_signatures {
+					for i in 0..65 {
+						writer.write_u8(sig.signature[i])?;
+					}
+				}
+
+				// if there's a redeem script serialize it
+				if redeem_script.is_some() {
+					let redeem_script = redeem_script.unwrap();
+					// present
+					writer.write_u8(1)?;
+					writer.write_u32(redeem_script.len as u32)?;
+					for i in 0..520 {
+						writer.write_u8(redeem_script.data[i])?;
+					}
+				} else {
+					// not present
+					writer.write_u8(0)?;
+				}
+				writer.write_u8(*address_type)?;
+			}
+			KernelFeatures::Burn { fee, amount } => {
+				fee.write(writer)?;
+				writer.write_u64(*amount)?;
 			}
 		}
 		Ok(())
@@ -551,7 +822,16 @@ impl KernelFeatures {
 				let fee = FeeFields::read(reader)?;
 				KernelFeatures::Plain { fee }
 			}
-			KernelFeatures::COINBASE_U8 => KernelFeatures::Coinbase,
+			KernelFeatures::COINBASE_U8 => {
+				let mut data = [0 as u8; 40];
+				for i in 0..40 {
+					data[i] = reader.read_u8()?;
+				}
+
+				KernelFeatures::Coinbase {
+					notarization_data: NotarizationData { data },
+				}
+			}
 			KernelFeatures::HEIGHT_LOCKED_U8 => {
 				let fee = FeeFields::read(reader)?;
 				let lock_height = reader.read_u64()?;
@@ -570,33 +850,53 @@ impl KernelFeatures {
 					relative_height,
 				}
 			}
-			KernelFeatures::BITCOIN_INIT_U8 => {
+			KernelFeatures::BTCCLAIM_U8 => {
 				let fee = FeeFields::read(reader)?;
 				let index = reader.read_u32()?;
-				let amount = reader.read_u64()?;
-				let btc_sig_part1 = reader.read_u64()?;
-				let btc_sig_part2 = reader.read_u64()?;
-				let btc_sig_part3 = reader.read_u64()?;
-				let btc_sig_part4 = reader.read_u64()?;
-				let btc_sig_part5 = reader.read_u64()?;
-				let btc_sig_part6 = reader.read_u64()?;
-				let btc_sig_part7 = reader.read_u64()?;
-				let btc_sig_part8 = reader.read_u64()?;
-				let btc_recovery_bit = reader.read_u8()?;
-				KernelFeatures::BitcoinInit {
+				let len = reader.read_u32()?;
+				let mut btc_signatures: Vec<BTCSignature> = Vec::new();
+
+				// read each signature
+				for i in 0..len {
+					let mut signature = [0 as u8; 65];
+					for i in 0..65 {
+						signature[i] = reader.read_u8()?;
+					}
+					let btc_signature = BTCSignature { signature };
+					btc_signatures.insert(i as usize, btc_signature);
+				}
+
+				// read this byte to determine if there's a redeem script
+				let redeem_script = match reader.read_u8()? {
+					0 => None,
+					_ => {
+						// it's present, read the 520 byte redeem script
+						let len = reader.read_u32()?;
+						let mut r: RedeemScript = RedeemScript {
+							data: [0 as u8; 520],
+							len: len.try_into().unwrap(),
+						};
+						for i in 0..520 {
+							r.data[i] = reader.read_u8()?;
+						}
+						Some(r)
+					}
+				};
+
+				let address_type = reader.read_u8()?;
+
+				KernelFeatures::BTCClaim {
 					fee,
 					index,
-					amount,
-					btc_sig_part1,
-					btc_sig_part2,
-					btc_sig_part3,
-					btc_sig_part4,
-					btc_sig_part5,
-					btc_sig_part6,
-					btc_sig_part7,
-					btc_sig_part8,
-					btc_recovery_bit,
+					btc_signatures,
+					redeem_script,
+					address_type,
 				}
+			}
+			KernelFeatures::BURN_U8 => {
+				let fee = FeeFields::read(reader)?;
+				let amount = reader.read_u64()?;
+				KernelFeatures::Burn { fee, amount }
 			}
 			_ => {
 				return Err(ser::Error::CorruptedData);
@@ -655,6 +955,12 @@ pub enum Error {
 	/// Validation error relating to kernel features.
 	/// It is invalid for a transaction to contain a coinbase kernel, for example.
 	InvalidKernelFeatures,
+	/// There are more than one notary kernels in this txn.
+	MultipleNotaryKernelFeatures,
+	/// Maximum burn of 100,000 BMWs is exceeded.
+	MaxBurnExceeded,
+	/// RecoveryByte Not found for this BTCKernel.
+	RecoveryByteNotFound,
 	/// feeshift is limited to 4 bits and fee must be positive and fit in 40 bits.
 	InvalidFeeFields,
 	/// NRD kernel relative height is limited to 1 week duration and must be greater than 0.
@@ -663,14 +969,34 @@ pub enum Error {
 	IncorrectSignature,
 	/// Underlying serialization error.
 	Serialization(ser::Error),
+	/// UtxoData error
+	UtxoDataError(String),
 	/// The type of Kernel Features was not expected here.
 	UnexpectedKernelFeaturesType,
+	/// The BTCSignature was invalid
+	InvalidBTCSignature,
+	/// Redeem Script is not found in the claim db
+	InvalidRedeemScript,
+	/// Invalid BTC Claim
+	InvalidBTCClaim,
+	/// No BTC Signature
+	NoSignature,
+	/// Too Many Keys
+	TooManyKeys,
+	/// The btc address was invalid
+	InvalidBTCAddress,
+	/// No utxo_data
+	NoUtxoData,
+	/// Invalid witness address
+	InvalidWitnessAddress(String),
+	/// Other
+	Other(String),
 }
 
 impl error::Error for Error {
 	fn description(&self) -> &str {
 		match *self {
-			_ => "some kind of keychain error",
+			_ => "transaction error",
 		}
 	}
 }
@@ -678,7 +1004,7 @@ impl error::Error for Error {
 impl fmt::Display for Error {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		match *self {
-			_ => write!(f, "some kind of keychain error"),
+			_ => write!(f, "some kind of transaction error"),
 		}
 	}
 }
@@ -689,9 +1015,21 @@ impl From<ser::Error> for Error {
 	}
 }
 
+impl From<bmw_utxo::error::Error> for Error {
+	fn from(e: bmw_utxo::error::Error) -> Error {
+		Error::UtxoDataError(format!("{:?}", e))
+	}
+}
+
 impl From<secp::Error> for Error {
 	fn from(e: secp::Error) -> Error {
 		Error::Secp(e)
+	}
+}
+
+impl From<bitcoin::util::address::Error> for Error {
+	fn from(e: bitcoin::util::address::Error) -> Error {
+		Error::InvalidWitnessAddress(e.to_string())
 	}
 }
 
@@ -780,7 +1118,7 @@ impl KernelFeatures {
 	/// Is this a coinbase kernel?
 	pub fn is_coinbase(&self) -> bool {
 		match self {
-			KernelFeatures::Coinbase => true,
+			KernelFeatures::Coinbase { .. } => true,
 			_ => false,
 		}
 	}
@@ -863,6 +1201,358 @@ impl TxKernel {
 		) {
 			return Err(Error::IncorrectSignature);
 		}
+		Ok(())
+	}
+
+	/// Validate a BTC Claim if it exists in this kernel
+	pub fn validate_btcclaim(
+		&self,
+		utxo_data: Option<Weak<RwLock<UtxoData>>>,
+	) -> Result<(), Error> {
+		match &self.features {
+			KernelFeatures::BTCClaim {
+				btc_signatures,
+				index,
+				redeem_script,
+				address_type,
+				..
+			} => {
+				if redeem_script.is_some() {
+					if *address_type != P2SH && *address_type != P2WSH && *address_type != P2SHWSH {
+						return Err(Error::InvalidBTCClaim);
+					};
+					self.process_redeem(
+						utxo_data,
+						&btc_signatures,
+						&index,
+						&redeem_script,
+						*address_type,
+					)?;
+				} else {
+					self.process_single_sig(utxo_data, &btc_signatures, &index)?;
+				}
+			}
+			_ => {}
+		}
+		Ok(())
+	}
+
+	/// Get the message from the challenge string
+	fn get_message_from_challenge(&self, challenge: String) -> Message {
+		let hash = misc::signed_msg_hash(&challenge);
+		Message::from_slice(&hash[..]).unwrap()
+	}
+
+	/// Checks that the btc signature is valid
+	fn check_btc_signature(
+		&self,
+		address: String,
+		challenge_str: String,
+		rec_sig: RecoverableSignature,
+		btc_recovery_byte: u8,
+	) -> Result<(), Error> {
+		let secp = Secp256k1::verification_only();
+		// build message from challenge_string
+		let msg = self.get_message_from_challenge(challenge_str);
+		// get pubkey from recoverable signature
+		let mut pubkey = BitcoinPublicKey {
+			key: secp
+				.recover(&msg, &rec_sig)
+				.map_err(|_| Error::InvalidBTCSignature)?,
+			compressed: ((btc_recovery_byte - 27) & 4) != 0,
+		};
+
+		// get the recovered address
+		let address_rec = if address.starts_with("1") {
+			Ok(Address::p2pkh(&pubkey, Bitcoin))
+		} else if address.starts_with("3") {
+			// for this address type, must be compressed.
+			pubkey.compressed = true;
+			Address::p2shwpkh(&pubkey, Bitcoin)
+		} else if address.starts_with("bc1") {
+			// for this address type, must be compressed.
+			pubkey.compressed = true;
+			Address::p2wpkh(&pubkey, Bitcoin)
+		} else {
+			return Err(Error::InvalidBTCAddress);
+		};
+
+		// if there's an error doing that, throw error.
+		if address_rec.is_err() {
+			return Err(Error::InvalidBTCAddress);
+		}
+
+		let address_rec = address_rec.unwrap();
+
+		// if the recovered address doesn't match the specified adress,
+		// throw an error
+		if format!("{}", address_rec) != address {
+			return Err(Error::InvalidBTCSignature);
+		}
+
+		// otherwise, success
+		Ok(())
+	}
+
+	/// Process a normal single signature BTC claim
+	/// Throw an error if anything is wrong
+	fn process_single_sig(
+		&self,
+		utxo_data: Option<Weak<RwLock<UtxoData>>>,
+		btc_signatures: &Vec<BTCSignature>,
+		index: &u32,
+	) -> Result<(), Error> {
+		if utxo_data.is_none() {
+			return Err(Error::NoUtxoData);
+		}
+		let utxo_data = utxo_data.unwrap().upgrade().unwrap();
+		let utxo_data = utxo_data.read();
+
+		// Something's wrong if there's no redeem and there's more than 1 sig.
+		if btc_signatures.len() != 1 {
+			return Err(Error::InvalidBTCClaim);
+		}
+
+		// get the btc_signature (only the first one.
+		let btc_signature = btc_signatures.get(0);
+		// if it's none, throw error
+		if btc_signature.is_none() {
+			return Err(Error::InvalidBTCSignature);
+		}
+		let btc_signature = btc_signature.unwrap();
+
+		// first byte is the recovery byte.
+		let btc_recovery_byte = btc_signature.signature[0];
+		// build a recoverable signature.
+		let (_, rec_sig) = get_recoverable_signature(self.features.clone(), 0)
+			.map_err(|_| Error::InvalidBTCSignature)?;
+
+		let challenge_str = self.get_challenge();
+
+		let address = (*utxo_data).get_address(*index);
+		// if the address is not found, throw an error.
+		if !address.is_ok() {
+			return Err(Error::InvalidBTCSignature);
+		}
+
+		let address = address.unwrap();
+
+		// check btc signature.
+		self.check_btc_signature(address, challenge_str, rec_sig, btc_recovery_byte)?;
+
+		Ok(())
+	}
+
+	fn get_challenge(&self) -> String {
+		// build the expected challenge based on kernel excess
+		let excess = format!("{:?}", self.excess);
+		let excess = excess.replace("Commitment(", "");
+		let excess = excess.replace(")", "");
+		let challenge_str = format!("bmw{}", excess);
+		challenge_str
+	}
+
+	/// Process a BTCClaim that has a redeem script
+	fn process_redeem(
+		&self,
+		utxo_data: Option<Weak<RwLock<UtxoData>>>,
+		btc_signatures: &Vec<BTCSignature>,
+		index: &u32,
+		redeem_script: &Option<RedeemScript>,
+		address_type: u8,
+	) -> Result<(), Error> {
+		if utxo_data.is_none() {
+			return Err(Error::NoUtxoData);
+		}
+		let utxo_data = utxo_data.unwrap().upgrade().unwrap();
+		let utxo_data = utxo_data.read();
+
+		// get redeem script
+		let redeem_script = redeem_script.unwrap();
+
+		// convert the redeem_script's data to a vec.
+		let mut data_vec = redeem_script.data.to_vec();
+		// truncate to the length of the script.
+		data_vec.truncate(redeem_script.len);
+		// convert into a script
+		let script: Script = data_vec.into();
+
+		let is_witness;
+		// get address based on this script's hash depending on address_type.
+		let address = if address_type == P2SH {
+			is_witness = false;
+			Address::p2sh(&script, Bitcoin)
+		} else if address_type == P2SHWSH {
+			is_witness = true;
+			Address::p2shwsh(&script, Bitcoin)
+		} else if address_type == P2WSH {
+			is_witness = true;
+			Address::p2wsh(&script, Bitcoin)
+		} else {
+			return Err(Error::InvalidBTCClaim);
+		};
+
+		// is it found in our utxo_data?
+		let index_found = (*utxo_data).get_index(format!("{}", address).to_string());
+
+		if index_found.is_err() {
+			return Err(Error::InvalidRedeemScript);
+		}
+
+		let index_found = index_found.unwrap();
+		// if the index is not the one that was specified in the kernel, throw an error.
+		if index_found != *index {
+			return Err(Error::InvalidBTCClaim);
+		}
+
+		// iterate through the script to count the number of keys required to process it.
+		// having more keys than needed is an error because it would fill up the blockchain.
+		let mut key_count = 0;
+		let mut instruction_counter = script.instructions();
+		loop {
+			let next = instruction_counter.next();
+
+			if next.is_none() {
+				break;
+			}
+			let next = next.unwrap();
+
+			// if next is an error throw InvalidBTCClaim
+			if next.is_err() {
+				return Err(Error::InvalidBTCClaim);
+			}
+
+			let next = next.unwrap();
+
+			match next {
+				PushBytes(_) => {
+					key_count += 1;
+				}
+				_ => {}
+			}
+		}
+
+		// if there's more signatures than needed, throw error.
+		if btc_signatures.len() > key_count {
+			return Err(Error::TooManyKeys);
+		}
+
+		// obtain the challenge message.
+		let mut instructions = script.instructions();
+
+		// loop through the instructions. Check each one.
+		let mut last_op = 1;
+		let mut cur_verified = 0;
+		let mut last_type_is_op = true;
+		loop {
+			let next = instructions.next();
+
+			if next.is_none() {
+				break;
+			}
+			let next = next.unwrap();
+
+			if next.is_err() {
+				return Err(Error::InvalidBTCClaim);
+			}
+
+			let next = next.unwrap();
+
+			match next {
+				Op(n) => {
+					if !last_type_is_op {
+						// check the verification
+						if cur_verified < last_op {
+							return Err(Error::NoSignature);
+						}
+					}
+
+					last_op = if n == OP_PUSHNUM_1 {
+						1
+					} else if n == OP_PUSHNUM_2 {
+						2
+					} else if n == OP_PUSHNUM_3 {
+						3
+					} else if n == OP_PUSHNUM_4 {
+						4
+					} else if n == OP_PUSHNUM_5 {
+						5
+					} else if n == OP_PUSHNUM_6 {
+						6
+					} else if n == OP_PUSHNUM_7 {
+						7
+					} else if n == OP_PUSHNUM_8 {
+						8
+					} else if n == OP_PUSHNUM_9 {
+						9
+					} else if n == OP_PUSHNUM_10 {
+						10
+					} else if n == OP_PUSHNUM_11 {
+						11
+					} else if n == OP_PUSHNUM_12 {
+						12
+					} else if n == OP_PUSHNUM_13 {
+						13
+					} else if n == OP_PUSHNUM_14 {
+						14
+					} else if n == OP_PUSHNUM_15 {
+						15
+					} else if n == OP_PUSHNUM_16 {
+						16
+					} else {
+						// anything else goes here
+						0
+					};
+					cur_verified = 0;
+					last_type_is_op = true;
+				}
+				PushBytes(data) => {
+					// if next is a push bytes, check all signatures. If no match is found
+					// it's an error.
+					// we only require a single signature for non-multisig scripts.
+
+					// get the pubkey
+					let pubkey = bitcoin::PublicKey::from_slice(data);
+					if pubkey.is_err() {
+						return Err(Error::InvalidBTCClaim);
+					}
+					let pubkey = pubkey.unwrap();
+
+					let mut count = 0;
+
+					for _ in btc_signatures {
+						let address = if is_witness {
+							Address::p2wpkh(&pubkey, Bitcoin)?
+						} else {
+							Address::p2pkh(&pubkey, Bitcoin)
+						};
+						// check each signature until a valid one is found
+						let (rec_byte, sig) =
+							get_recoverable_signature(self.features.clone(), count)
+								.map_err(|_| Error::InvalidBTCSignature)?;
+
+						let challenge_str = self.get_challenge();
+						let verify = self
+							.check_btc_signature(address.to_string(), challenge_str, sig, rec_byte)
+							.is_ok();
+						if verify {
+							cur_verified += 1;
+							break;
+						}
+						count = count + 1;
+						last_type_is_op = false;
+					}
+
+					// if this is not a OP_PUSHNUM_N (last_op == 0), we require all signatures
+					// last_op == 0 means something other than an OP_PUSHNUM_N, we don't know what
+					// to do, so just require all signatures in this case.
+					if last_op == 0 && cur_verified == 0 {
+						return Err(Error::NoSignature);
+					}
+				}
+			}
+		}
+
 		Ok(())
 	}
 
@@ -969,18 +1659,8 @@ impl Readable for TransactionBody {
 			return Err(ser::Error::TooLargeReadErr);
 		}
 
-		// Read protocol version specific inputs.
-		let inputs = match reader.protocol_version().value() {
-			0..=2 => {
-				let inputs: Vec<Input> = read_multi(reader, num_inputs)?;
-				Inputs::from(inputs.as_slice())
-			}
-			3..=ser::ProtocolVersion::MAX => {
-				let inputs: Vec<CommitWrapper> = read_multi(reader, num_inputs)?;
-				Inputs::from(inputs.as_slice())
-			}
-		};
-
+		let inputs: Vec<CommitWrapper> = read_multi(reader, num_inputs)?;
+		let inputs = Inputs::from(inputs.as_slice());
 		let outputs = read_multi(reader, num_outputs)?;
 		let kernels = read_multi(reader, num_kernels)?;
 
@@ -1081,19 +1761,15 @@ impl TransactionBody {
 	/// inputs, if any, are kept intact.
 	/// Sort order is maintained.
 	pub fn with_input(mut self, input: Input) -> TransactionBody {
-		match &mut self.inputs {
-			Inputs::CommitOnly(inputs) => {
-				let commit = input.into();
-				if let Err(e) = inputs.binary_search(&commit) {
-					inputs.insert(e, commit)
-				};
-			}
-			Inputs::FeaturesAndCommit(inputs) => {
-				if let Err(e) = inputs.binary_search(&input) {
-					inputs.insert(e, input)
-				};
-			}
-		};
+		self.inputs.add(input.into());
+		self
+	}
+
+	/// Builds a new body with the provided inputs (w/ signature) added. Existing
+	/// inputs, if any, are kept intact.
+	/// Sort order is maintained.
+	pub fn with_input_wsig(mut self, input_with_sig: CommitWrapper) -> TransactionBody {
+		self.inputs.add(input_with_sig);
 		self
 	}
 
@@ -1141,11 +1817,12 @@ impl TransactionBody {
 		self.kernels
 			.iter()
 			.filter_map(|k| match k.features {
-				KernelFeatures::Coinbase => None,
+				KernelFeatures::Coinbase { .. } => None,
 				KernelFeatures::Plain { fee } => Some(fee),
 				KernelFeatures::HeightLocked { fee, .. } => Some(fee),
 				KernelFeatures::NoRecentDuplicate { fee, .. } => Some(fee),
-				KernelFeatures::BitcoinInit { fee, .. } => Some(fee),
+				KernelFeatures::BTCClaim { fee, .. } => Some(fee),
+				KernelFeatures::Burn { fee, .. } => Some(fee),
 			})
 			.fold(0, |acc, fee_fields| {
 				acc.saturating_add(fee_fields.fee(height))
@@ -1157,11 +1834,12 @@ impl TransactionBody {
 		self.kernels
 			.iter()
 			.filter_map(|k| match k.features {
-				KernelFeatures::Coinbase => None,
+				KernelFeatures::Coinbase { .. } => None,
 				KernelFeatures::Plain { fee } => Some(fee),
 				KernelFeatures::HeightLocked { fee, .. } => Some(fee),
 				KernelFeatures::NoRecentDuplicate { fee, .. } => Some(fee),
-				KernelFeatures::BitcoinInit { fee, .. } => Some(fee),
+				KernelFeatures::BTCClaim { fee, .. } => Some(fee),
+				KernelFeatures::Burn { fee, .. } => Some(fee),
 			})
 			.fold(0, |acc, fee_fields| max(acc, fee_fields.fee_shift(height)))
 	}
@@ -1179,24 +1857,47 @@ impl TransactionBody {
 		FeeFields::new(self.fee_shift(height) as u64, self.fee(height))
 	}
 
-	fn overage(&self, height: u64) -> i64 {
-		let mut btc_init_amt = 0;
+	fn overage(
+		&self,
+		height: u64,
+		utxo_data: Option<Weak<RwLock<UtxoData>>>,
+		amount: Option<u64>,
+	) -> i64 {
+		let mut btc_init_amt: i64 = 0;
+
+		// if amount is passed in we use it as the wallet
+		if amount.is_some() {
+			btc_init_amt -= amount.unwrap() as i64;
+		}
+		if utxo_data.is_some() {
+			let utxo_data = &*utxo_data.unwrap().upgrade().unwrap();
+			let utxo_data = utxo_data.read();
+
+			for kernel in self.kernels.clone() {
+				match kernel.features {
+					KernelFeatures::BTCClaim { index, .. } => {
+						let amount = (*utxo_data).get_sats_by_index(index);
+						if amount.is_ok() {
+							btc_init_amt -= (amount.unwrap() * 10) as i64;
+						}
+					}
+					_ => {}
+				}
+			}
+		}
+
+		let mut burn_amount: i64 = 0;
 
 		for kernel in self.kernels.clone() {
 			match kernel.features {
-				KernelFeatures::BitcoinInit {
-					fee: _,
-					index: _,
-					amount,
-					..
-				} => {
-					btc_init_amt -= amount;
+				KernelFeatures::Burn { amount, .. } => {
+					burn_amount += amount as i64;
 				}
 				_ => {}
 			}
 		}
 
-		(btc_init_amt + self.fee(height)) as i64
+		btc_init_amt + self.fee(height) as i64 + burn_amount
 	}
 
 	/// Calculate weight of transaction using block weighing
@@ -1361,6 +2062,30 @@ impl TransactionBody {
 		Ok(())
 	}
 
+	/// We only allow a maximum burn per tx of 100,000 BMWs. This is to ensure
+	/// overflows do not occur.
+	pub fn validate_max_burn(&self) -> Result<(), Error> {
+		for kernel in self.kernels() {
+			match kernel.features {
+				KernelFeatures::Burn { amount, .. } => {
+					if amount > 100_000_000_000_000 {
+						return Err(Error::MaxBurnExceeded);
+					}
+				}
+				_ => {}
+			}
+		}
+		Ok(())
+	}
+
+	/// Identifiers w/ R&P'.
+	pub fn identifiers(&self) -> Vec<OutputIdentifier> {
+		self.outputs
+			.iter()
+			.map(|o| o.identifier.clone())
+			.collect::<Vec<OutputIdentifier>>()
+	}
+
 	/// Validates all relevant parts of a transaction body. Checks the
 	/// excess value against the signature as well as range proofs for each
 	/// output.
@@ -1369,6 +2094,7 @@ impl TransactionBody {
 		weighting: Weighting,
 		verifier: Arc<RwLock<dyn VerifierCache>>,
 	) -> Result<(), Error> {
+		self.validate_max_burn()?;
 		self.validate_read(weighting)?;
 
 		// Find all the outputs that have not had their rangeproofs verified.
@@ -1397,11 +2123,20 @@ impl TransactionBody {
 		// Verify the unverified tx kernels.
 		TxKernel::batch_sig_verify(&kernels)?;
 
+		// Verify the unverified Identifiers.
+		let identifiers = {
+			let mut verifier = verifier.write();
+			verifier.filter_r_sig_unverified(&self.identifiers())
+		};
+
+		OutputIdentifier::batch_sig_verify(&identifiers)?;
+
 		// Cache the successful verification results for the new outputs and kernels.
 		{
 			let mut verifier = verifier.write();
 			verifier.add_rangeproof_verified(outputs);
 			verifier.add_kernel_sig_verified(kernels);
+			verifier.add_r_sig_verified(identifiers);
 		}
 		Ok(())
 	}
@@ -1506,6 +2241,16 @@ impl Transaction {
 		Transaction { offset, ..self }
 	}
 
+	/// Builds a new transaction with the provided inputs_with_wsig added. Existing
+	/// inputs, if any, are kept intact.
+	/// Sort order is maintained.
+	pub fn with_input_wsig(self, input: CommitWrapper) -> Transaction {
+		Transaction {
+			body: self.body.with_input_wsig(input),
+			..self
+		}
+	}
+
 	/// Builds a new transaction with the provided inputs added. Existing
 	/// inputs, if any, are kept intact.
 	/// Sort order is maintained.
@@ -1575,8 +2320,13 @@ impl Transaction {
 	}
 
 	/// Total overage across all kernels.
-	pub fn overage(&self, height: u64) -> i64 {
-		self.body.overage(height)
+	pub fn overage(
+		&self,
+		height: u64,
+		utxo_data: Option<Weak<RwLock<UtxoData>>>,
+		amount: Option<u64>,
+	) -> i64 {
+		self.body.overage(height, utxo_data, amount)
 	}
 
 	/// Lock height of a transaction is the max lock height of the kernels.
@@ -1595,6 +2345,19 @@ impl Transaction {
 		Ok(())
 	}
 
+	/// Validate each transaction's btc claims
+	fn validate_btc_claims(&self, utxo_data: Option<Weak<RwLock<UtxoData>>>) -> Result<(), Error> {
+		for kernel in self.kernels() {
+			match kernel.features {
+				KernelFeatures::BTCClaim { .. } => {
+					kernel.validate_btcclaim(utxo_data.clone())?;
+				}
+				_ => {}
+			}
+		}
+		Ok(())
+	}
+
 	/// Validates all relevant parts of a fully built transaction. Checks the
 	/// excess value against the signature as well as range proofs for each
 	/// output.
@@ -1603,10 +2366,13 @@ impl Transaction {
 		weighting: Weighting,
 		verifier: Arc<RwLock<dyn VerifierCache>>,
 		height: u64,
+		utxo_data: Option<Weak<RwLock<UtxoData>>>,
+		amount: Option<u64>,
 	) -> Result<(), Error> {
 		self.body.verify_features()?;
 		self.body.validate(weighting, verifier)?;
-		self.verify_kernel_sums(self.overage(height), self.offset.clone())?;
+		self.validate_btc_claims(utxo_data.clone())?;
+		self.verify_kernel_sums(self.overage(height, utxo_data, amount), self.offset.clone())?;
 		Ok(())
 	}
 
@@ -1860,6 +2626,9 @@ pub struct Input {
 		deserialize_with = "secp_ser::commitment_from_hex"
 	)]
 	pub commit: Commitment,
+	/// The signature for the spending output P'. (NIT)
+	#[serde(with = "secp_ser::sig_serde")]
+	pub sig: SecpSignature,
 }
 
 impl DefaultHashable for Input {}
@@ -1871,21 +2640,13 @@ impl AsRef<Commitment> for Input {
 	}
 }
 
-impl From<&OutputIdentifier> for Input {
-	fn from(out: &OutputIdentifier) -> Self {
-		Input {
-			features: out.features,
-			commit: out.commit,
-		}
-	}
-}
-
 /// Implementation of Writeable for a transaction Input, defines how to write
 /// an Input as binary.
 impl Writeable for Input {
 	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), ser::Error> {
 		self.features.write(writer)?;
 		self.commit.write(writer)?;
+		self.sig.write(writer)?;
 		Ok(())
 	}
 }
@@ -1896,7 +2657,8 @@ impl Readable for Input {
 	fn read<R: Reader>(reader: &mut R) -> Result<Input, ser::Error> {
 		let features = OutputFeatures::read(reader)?;
 		let commit = Commitment::read(reader)?;
-		Ok(Input::new(features, commit))
+		let sig = SecpSignature::read(reader)?;
+		Ok(Input::new(features, commit, sig))
 	}
 }
 
@@ -1907,8 +2669,12 @@ impl Readable for Input {
 impl Input {
 	/// Build a new input from the data required to identify and verify an
 	/// output being spent.
-	pub fn new(features: OutputFeatures, commit: Commitment) -> Input {
-		Input { features, commit }
+	pub fn new(features: OutputFeatures, commit: Commitment, sig: SecpSignature) -> Input {
+		Input {
+			features,
+			commit,
+			sig,
+		}
 	}
 
 	/// The input commitment which _partially_ identifies the output being
@@ -1932,28 +2698,26 @@ impl Input {
 
 /// We need to wrap commitments so they can be sorted with hashable_ord.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
-#[serde(transparent)]
 pub struct CommitWrapper {
+	/// The commitment
 	#[serde(
 		serialize_with = "secp_ser::as_hex",
 		deserialize_with = "secp_ser::commitment_from_hex"
 	)]
-	commit: Commitment,
+	pub commit: Commitment,
+	/// The signature for the spending output P'. (NIT)
+	#[serde(with = "secp_ser::sig_serde")]
+	pub sig: SecpSignature,
 }
 
 impl DefaultHashable for CommitWrapper {}
 hashable_ord!(CommitWrapper);
 
-impl From<Commitment> for CommitWrapper {
-	fn from(commit: Commitment) -> Self {
-		CommitWrapper { commit }
-	}
-}
-
 impl From<Input> for CommitWrapper {
 	fn from(input: Input) -> Self {
 		CommitWrapper {
 			commit: input.commitment(),
+			sig: input.sig,
 		}
 	}
 }
@@ -1962,6 +2726,7 @@ impl From<&Input> for CommitWrapper {
 	fn from(input: &Input) -> Self {
 		CommitWrapper {
 			commit: input.commitment(),
+			sig: input.sig,
 		}
 	}
 }
@@ -1975,89 +2740,126 @@ impl AsRef<Commitment> for CommitWrapper {
 impl Readable for CommitWrapper {
 	fn read<R: Reader>(reader: &mut R) -> Result<CommitWrapper, ser::Error> {
 		let commit = Commitment::read(reader)?;
-		Ok(CommitWrapper { commit })
+		let sig = secp::Signature::read(reader)?;
+		Ok(CommitWrapper { commit, sig })
 	}
 }
 
 impl Writeable for CommitWrapper {
 	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), ser::Error> {
-		self.commit.write(writer)
+		self.commit.write(writer)?;
+		self.sig.write(writer)?;
+		Ok(())
 	}
 }
 
+/*
 impl From<Inputs> for Vec<CommitWrapper> {
 	fn from(inputs: Inputs) -> Self {
 		match inputs {
 			Inputs::CommitOnly(inputs) => inputs,
-			Inputs::FeaturesAndCommit(inputs) => {
-				let mut commits: Vec<_> = inputs.iter().map(|input| input.into()).collect();
-				commits.sort_unstable();
-				commits
-			}
 		}
 	}
 }
+*/
 
+/*
 impl From<&Inputs> for Vec<CommitWrapper> {
 	fn from(inputs: &Inputs) -> Self {
 		match inputs {
 			Inputs::CommitOnly(inputs) => inputs.clone(),
-			Inputs::FeaturesAndCommit(inputs) => {
-				let mut commits: Vec<_> = inputs.iter().map(|input| input.into()).collect();
-				commits.sort_unstable();
-				commits
-			}
 		}
 	}
 }
+*/
 
 impl CommitWrapper {
 	/// Wrapped commitment.
 	pub fn commitment(&self) -> Commitment {
 		self.commit
 	}
+
+	/// Batch signature verification.
+	pub fn batch_sig_verify(
+		accomplished_inputs_with_sig: &[(OutputIdentifier, Hash, CommitWrapper)],
+	) -> Result<(), Error> {
+		let len = accomplished_inputs_with_sig.len();
+		let mut sigs = Vec::with_capacity(len);
+		let mut pubkeys = Vec::with_capacity(len);
+		let mut msgs = Vec::with_capacity(len);
+
+		for (rnp, h, input) in accomplished_inputs_with_sig {
+			sigs.push(input.sig.clone());
+			if rnp.commitment() == input.commit {
+				pubkeys.push(rnp.onetime_pubkey.clone());
+				msgs.push(rnp.input_sig_msg(*h));
+			} else {
+				return Err(Error::IncorrectSignature);
+			}
+		}
+
+		let secp = static_secp_instance();
+		let secp = secp.lock();
+
+		if !aggsig::verify_batch(&secp, &sigs, &msgs, &pubkeys) {
+			return Err(Error::IncorrectSignature);
+		}
+
+		Ok(())
+	}
 }
 /// Wrapper around a vec of inputs.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[serde(untagged)]
-pub enum Inputs {
-	/// Vec of commitments.
-	CommitOnly(Vec<CommitWrapper>),
-	/// Vec of inputs.
-	FeaturesAndCommit(Vec<Input>),
+pub struct Inputs(pub Vec<CommitWrapper>);
+
+impl From<&Inputs> for Vec<CommitWrapper> {
+	fn from(inputs: &Inputs) -> Vec<CommitWrapper> {
+		let mut ret = vec![];
+		for input in &inputs.0 {
+			ret.push(*input);
+		}
+		ret.sort_unstable();
+		ret.to_vec()
+	}
+}
+
+impl From<Inputs> for Vec<CommitWrapper> {
+	fn from(inputs: Inputs) -> Vec<CommitWrapper> {
+		let mut ret = vec![];
+		for input in inputs {
+			ret.push(input);
+		}
+		ret.sort_unstable();
+		ret
+	}
 }
 
 impl From<&[Input]> for Inputs {
 	fn from(inputs: &[Input]) -> Self {
-		Inputs::FeaturesAndCommit(inputs.to_vec())
+		let mut wrappers = vec![];
+		for input in inputs {
+			wrappers.push(CommitWrapper {
+				commit: input.commitment(),
+				sig: input.sig,
+			});
+		}
+		let mut ret = Inputs(wrappers);
+		ret.sort_unstable();
+		ret
 	}
 }
 
 impl From<&[CommitWrapper]> for Inputs {
 	fn from(commits: &[CommitWrapper]) -> Self {
-		Inputs::CommitOnly(commits.to_vec())
-	}
-}
-
-/// Used when converting to v2 compatibility.
-/// We want to preserve output features here.
-impl From<&[OutputIdentifier]> for Inputs {
-	fn from(outputs: &[OutputIdentifier]) -> Self {
-		let mut inputs: Vec<_> = outputs
-			.iter()
-			.map(|out| Input {
-				features: out.features,
-				commit: out.commit,
-			})
-			.collect();
-		inputs.sort_unstable();
-		Inputs::FeaturesAndCommit(inputs)
+		let mut ret = Inputs(commits.to_vec());
+		ret.sort_unstable();
+		ret
 	}
 }
 
 impl Default for Inputs {
 	fn default() -> Self {
-		Inputs::CommitOnly(vec![])
+		Inputs(vec![])
 	}
 }
 
@@ -2067,69 +2869,88 @@ impl Writeable for Inputs {
 		if self.is_empty() {
 			return Ok(());
 		}
-
-		// If writing for a hash then simply write all our inputs.
-		if writer.serialization_mode().is_hash_mode() {
-			match self {
-				Inputs::CommitOnly(inputs) => inputs.write(writer)?,
-				Inputs::FeaturesAndCommit(inputs) => inputs.write(writer)?,
-			}
-		} else {
-			// Otherwise we are writing full data and need to consider our inputs variant and protocol version.
-			match self {
-				Inputs::CommitOnly(inputs) => match writer.protocol_version().value() {
-					0..=2 => return Err(ser::Error::UnsupportedProtocolVersion),
-					3..=ProtocolVersion::MAX => inputs.write(writer)?,
-				},
-				Inputs::FeaturesAndCommit(inputs) => match writer.protocol_version().value() {
-					0..=2 => inputs.write(writer)?,
-					3..=ProtocolVersion::MAX => {
-						let inputs: Vec<CommitWrapper> = self.into();
-						inputs.write(writer)?;
-					}
-				},
-			}
-		}
+		self.0.write(writer)?;
 		Ok(())
+	}
+}
+
+impl IntoIterator for Inputs {
+	type Item = CommitWrapper;
+	type IntoIter = std::vec::IntoIter<Self::Item>;
+
+	fn into_iter(self) -> Self::IntoIter {
+		self.0.into_iter()
 	}
 }
 
 impl Inputs {
 	/// Number of inputs.
 	pub fn len(&self) -> usize {
-		match self {
-			Inputs::CommitOnly(inputs) => inputs.len(),
-			Inputs::FeaturesAndCommit(inputs) => inputs.len(),
-		}
+		self.0.len()
 	}
 
 	/// Empty inputs?
 	pub fn is_empty(&self) -> bool {
-		self.len() == 0
+		self.0.is_empty()
 	}
 
 	/// Verify inputs are sorted and unique.
 	fn verify_sorted_and_unique(&self) -> Result<(), ser::Error> {
-		match self {
-			Inputs::CommitOnly(inputs) => inputs.verify_sorted_and_unique(),
-			Inputs::FeaturesAndCommit(inputs) => inputs.verify_sorted_and_unique(),
-		}
+		self.0.verify_sorted_and_unique()
 	}
 
 	/// Sort the inputs.
 	fn sort_unstable(&mut self) {
-		match self {
-			Inputs::CommitOnly(inputs) => inputs.sort_unstable(),
-			Inputs::FeaturesAndCommit(inputs) => inputs.sort_unstable(),
-		}
+		self.0.sort_unstable();
+	}
+
+	/// add an item
+	fn add(&mut self, elem: CommitWrapper) {
+		self.0.push(elem);
+		self.sort_unstable();
 	}
 
 	/// For debug purposes only. Do not rely on this for anything.
 	pub fn version_str(&self) -> &str {
-		match self {
-			Inputs::CommitOnly(_) => "v3",
-			Inputs::FeaturesAndCommit(_) => "v2",
+		"v3"
+	}
+
+	/// build a hashmap from the commit -> signatures for reconstructing from outputidentifiers
+	pub fn build_map(&self) -> Result<HashMap<Commitment, SecpSignature>, Error> {
+		let mut sig_map = HashMap::new();
+		for input in self.0.clone().into_iter().enumerate() {
+			sig_map.insert(input.1.commit, input.1.sig);
 		}
+		Ok(sig_map)
+	}
+
+	/// convert from &[OutputIdentifier], Map<commit, SecpSignature> -> Inputs
+	pub fn from_output_identifiers(
+		output_identifiers: &[OutputIdentifier],
+		sig_map: HashMap<Commitment, SecpSignature>,
+	) -> Result<Inputs, Error> {
+		let mut inputs_with_sigs = Vec::new();
+		for input in output_identifiers {
+			let commit = input.commit;
+			let sig = *sig_map
+				.get(&commit)
+				.unwrap_or(&secp::Signature::from_raw_data(&[0; 64]).unwrap());
+			let features = input.features;
+			inputs_with_sigs.push(Input {
+				commit,
+				sig,
+				features,
+			});
+		}
+		let mut inputs_with_sigs_commit_wrappers = vec![];
+		for input in inputs_with_sigs {
+			inputs_with_sigs_commit_wrappers.push(CommitWrapper {
+				commit: input.commit,
+				sig: input.sig,
+			});
+		}
+		inputs_with_sigs_commit_wrappers.sort_unstable();
+		Ok(Inputs(inputs_with_sigs_commit_wrappers))
 	}
 }
 
@@ -2145,6 +2966,8 @@ enum_from_primitive! {
 		Coinbase = 1,
 	}
 }
+
+impl DefaultHashable for OutputFeatures {}
 
 impl Writeable for OutputFeatures {
 	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), ser::Error> {
@@ -2239,9 +3062,24 @@ impl OutputFeatures {
 
 impl Output {
 	/// Create a new output with the provided features, commitment and rangeproof.
-	pub fn new(features: OutputFeatures, commit: Commitment, proof: RangeProof) -> Output {
+	pub fn new(
+		features: OutputFeatures,
+		commit: Commitment,
+		proof: RangeProof,
+		r_sig: SecpSignature,
+		view_tag: u8,
+		nonce: PublicKey,
+		onetime_pubkey: PublicKey,
+	) -> Output {
 		Output {
-			identifier: OutputIdentifier { features, commit },
+			identifier: OutputIdentifier::new(
+				features,
+				&commit,
+				r_sig,
+				view_tag,
+				nonce,
+				onetime_pubkey,
+			),
 			proof,
 		}
 	}
@@ -2298,6 +3136,8 @@ impl Output {
 	}
 }
 
+impl DefaultHashable for Output {}
+
 impl AsRef<OutputIdentifier> for Output {
 	fn as_ref(&self) -> &OutputIdentifier {
 		&self.identifier
@@ -2319,6 +3159,21 @@ pub struct OutputIdentifier {
 		deserialize_with = "secp_ser::commitment_from_hex"
 	)]
 	pub commit: Commitment,
+
+	/// The rest of this are the NIT related fields
+
+	/// Public nonce R for generating Ephemeral key.
+	#[serde(with = "secp_ser::pubkey_serde")]
+	pub nonce: PublicKey,
+	/// R signature as the spending coin ownership proof by equation (2) of https://eprint.iacr.org/2020/1064.pdf.
+	#[serde(with = "secp_ser::sig_serde")]
+	pub r_sig: SecpSignature,
+	/// One-time public key P' which is calculated by H(A')*G+B
+	#[serde(with = "secp_ser::pubkey_serde")]
+	pub onetime_pubkey: PublicKey,
+	/// The "view tag" of a Stealth Address, i.e. the first byte of the shared secret.
+	/// For Stealth Address (A,B): "view tag" = `Hash(a*R) === Hash(r*A)`.
+	pub view_tag: u8,
 }
 
 impl DefaultHashable for OutputIdentifier {}
@@ -2332,10 +3187,21 @@ impl AsRef<Commitment> for OutputIdentifier {
 
 impl OutputIdentifier {
 	/// Build a new output_identifier.
-	pub fn new(features: OutputFeatures, commit: &Commitment) -> OutputIdentifier {
+	pub fn new(
+		features: OutputFeatures,
+		commit: &Commitment,
+		r_sig: SecpSignature,
+		view_tag: u8,
+		nonce: PublicKey,
+		onetime_pubkey: PublicKey,
+	) -> OutputIdentifier {
 		OutputIdentifier {
 			features,
 			commit: *commit,
+			r_sig,
+			nonce,
+			onetime_pubkey,
+			view_tag,
 		}
 	}
 
@@ -2361,7 +3227,78 @@ impl OutputIdentifier {
 			proof,
 		}
 	}
+
+	/// Get signing message for Input P'-signature.
+	/// Msg = Hash(OutputFeatures || commit || view_tag || R || H(index | Rangeproof)).
+	/// Note:
+	///   - Message include the hash of rangeproof which has a proof message with a timestamp, to kill the replay attack.
+	///   - Instead of using rangeproof hash, we use the rangeproof MMR leaf node hash which always prepends the node's position in the MMR,
+	///     this helps to avoid the real hash computation and enables a directly reading the MMR leaf node hash.
+	pub fn input_sig_msg(&self, rp_hash: Hash) -> secp::Message {
+		let secp = util::secp::Secp256k1::with_caps(ContextFlag::Full);
+		secp::Message::from_slice(
+			(
+				self,
+				self.view_tag,
+				self.nonce.serialize_vec(&secp, true).as_ref().to_vec(),
+				rp_hash,
+			)
+				.hash()
+				.to_vec()
+				.as_slice(),
+		)
+		.unwrap()
+	}
+
+	/// Get signing message for Output R signature.
+	/// Msg = Hash(OutputFeatures || commit || view_tag || P').
+	pub fn output_rr_sig_msg(&self) -> secp::Message {
+		let serialized_onetime_pubkey = {
+			let secp = static_secp_instance();
+			let secp = secp.lock();
+			self.onetime_pubkey
+				.serialize_vec(&secp, true)
+				.as_ref()
+				.to_vec()
+		};
+		secp::Message::from_slice(
+			(
+				self.features,
+				self.commit,
+				self.view_tag,
+				serialized_onetime_pubkey,
+			)
+				.hash()
+				.to_vec()
+				.as_slice(),
+		)
+		.unwrap()
+	}
+
+	/// Batch signature verification.
+	pub fn batch_sig_verify(outputs: &[OutputIdentifier]) -> Result<(), Error> {
+		let len = outputs.len();
+		let mut sigs = Vec::with_capacity(len);
+		let mut pubkeys = Vec::with_capacity(len);
+		let mut msgs = Vec::with_capacity(len);
+
+		for identifier in outputs {
+			sigs.push(identifier.r_sig.clone());
+			pubkeys.push(identifier.nonce.clone());
+			msgs.push(identifier.output_rr_sig_msg());
+		}
+
+		let secp = static_secp_instance();
+		let secp = secp.lock();
+		if !aggsig::verify_batch(&secp, &sigs, &msgs, &pubkeys) {
+			return Err(Error::IncorrectSignature);
+		}
+
+		Ok(())
+	}
 }
+
+impl DefaultHashable for Commitment {}
 
 impl ToHex for OutputIdentifier {
 	fn to_hex(&self) -> String {
@@ -2373,6 +3310,10 @@ impl Writeable for OutputIdentifier {
 	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), ser::Error> {
 		self.features.write(writer)?;
 		self.commit.write(writer)?;
+		self.r_sig.write(writer)?;
+		self.nonce.write(writer)?;
+		self.onetime_pubkey.write(writer)?;
+		self.view_tag.write(writer)?;
 		Ok(())
 	}
 }
@@ -2382,6 +3323,10 @@ impl Readable for OutputIdentifier {
 		Ok(OutputIdentifier {
 			features: OutputFeatures::read(reader)?,
 			commit: Commitment::read(reader)?,
+			r_sig: secp::Signature::read(reader)?,
+			nonce: PublicKey::read(reader)?,
+			onetime_pubkey: PublicKey::read(reader)?,
+			view_tag: reader.read_u8()?,
 		})
 	}
 }
@@ -2395,19 +3340,12 @@ impl PMMRable for OutputIdentifier {
 
 	fn elmt_size() -> Option<u16> {
 		Some(
-			(1 + secp::constants::PEDERSEN_COMMITMENT_SIZE)
+			(2 + secp::constants::PEDERSEN_COMMITMENT_SIZE
+				+ secp::constants::COMPRESSED_PUBLIC_KEY_SIZE * 2
+				+ secp::constants::COMPACT_SIGNATURE_SIZE)
 				.try_into()
 				.unwrap(),
 		)
-	}
-}
-
-impl From<&Input> for OutputIdentifier {
-	fn from(input: &Input) -> Self {
-		OutputIdentifier {
-			features: input.features,
-			commit: input.commit,
-		}
 	}
 }
 
@@ -2422,6 +3360,7 @@ mod test {
 	use super::*;
 	use crate::core::hash::Hash;
 	use crate::core::id::{ShortId, ShortIdentifiable};
+	use crate::ser::ProtocolVersion;
 	use keychain::{ExtKeychain, Keychain, SwitchCommitmentType};
 
 	#[test]
@@ -2543,6 +3482,58 @@ mod test {
 	}
 
 	#[test]
+	fn test_btcclaim_kernel_ser_deser() {
+		global::set_local_nrd_enabled(true);
+
+		let keychain = ExtKeychain::from_random_seed(false).unwrap();
+		let key_id = ExtKeychain::derive_key_id(1, 1, 0, 0, 0);
+		let commit = keychain
+			.commit(5, &key_id, SwitchCommitmentType::Regular)
+			.unwrap();
+
+		// just some bytes for testing ser/deser
+		let sig = secp::Signature::from_raw_data(&[0; 64]).unwrap();
+
+		// just some bytes for testing ser/deser
+		let mut signature = [0 as u8; 65];
+		for i in 0..65 {
+			signature[i] = i as u8;
+		}
+
+		// now check a BTCClaim kernel will serialize/deserialize correctly
+		let kernel = TxKernel {
+			features: KernelFeatures::BTCClaim {
+				fee: 10.into(),
+				index: 1,
+				btc_signatures: vec![BTCSignature { signature }],
+				redeem_script: None,
+				address_type: 0, // does not matter for non redeem script
+			},
+			excess: commit,
+			excess_sig: sig.clone(),
+		};
+
+		// Test explicit protocol version.
+		for version in vec![ProtocolVersion(1), ProtocolVersion(2)] {
+			let mut vec = vec![];
+			ser::serialize(&mut vec, version, &kernel).expect("serialized failed");
+			let kernel2: TxKernel = ser::deserialize(&mut &vec[..], version).unwrap();
+
+			assert_eq!(kernel.features, kernel2.features);
+			assert_eq!(kernel2.excess, commit);
+			assert_eq!(kernel2.excess_sig, sig.clone());
+		}
+
+		// Test with "default" protocol version.
+		let mut vec = vec![];
+		ser::serialize_default(&mut vec, &kernel).expect("serialized failed");
+		let kernel2: TxKernel = ser::deserialize_default(&mut &vec[..]).unwrap();
+		assert_eq!(kernel.features, kernel2.features);
+		assert_eq!(kernel2.excess, commit);
+		assert_eq!(kernel2.excess_sig, sig.clone());
+	}
+
+	#[test]
 	fn nrd_kernel_verify_sig() {
 		let keychain = ExtKeychain::from_random_seed(false).unwrap();
 		let key_id = ExtKeychain::derive_key_id(1, 1, 0, 0, 0);
@@ -2626,6 +3617,7 @@ mod test {
 		let input = Input {
 			features: OutputFeatures::Plain,
 			commit,
+			sig: secp::Signature::from_raw_data(&[0; 64]).unwrap(),
 		};
 
 		let block_hash =
@@ -2635,17 +3627,18 @@ mod test {
 		let nonce = 0;
 
 		let short_id = input.short_id(&block_hash, nonce);
-		assert_eq!(short_id, ShortId::from_hex("c4b05f2ba649").unwrap());
+		assert_eq!(short_id, ShortId::from_hex("0a454aaa6ca3").unwrap());
 
 		// now generate the short_id for a *very* similar output (single feature flag
 		// different) and check it generates a different short_id
 		let input = Input {
 			features: OutputFeatures::Coinbase,
 			commit,
+			sig: secp::Signature::from_raw_data(&[0; 64]).unwrap(),
 		};
 
 		let short_id = input.short_id(&block_hash, nonce);
-		assert_eq!(short_id, ShortId::from_hex("3f0377c624e9").unwrap());
+		assert_eq!(short_id, ShortId::from_hex("0ea71cba2a25").unwrap());
 	}
 
 	#[test]
@@ -2656,9 +3649,17 @@ mod test {
 		assert_eq!(features, KernelFeatures::Plain { fee: 10.into() });
 
 		let mut vec = vec![];
-		ser::serialize_default(&mut vec, &(1u8, 0u64, 0u64))?;
+		ser::serialize_default(
+			&mut vec,
+			&(1u8, 0u64, 0u64, NotarizationData { data: [0; 40] }),
+		)?;
 		let features: KernelFeatures = ser::deserialize_default(&mut &vec[..])?;
-		assert_eq!(features, KernelFeatures::Coinbase);
+		assert_eq!(
+			features,
+			KernelFeatures::Coinbase {
+				notarization_data: NotarizationData { data: [0; 40] }
+			}
+		);
 
 		let mut vec = vec![];
 		ser::serialize_default(&mut vec, &(2u8, 10u64, 100u64))?;
@@ -2679,7 +3680,7 @@ mod test {
 
 		// Additional kernel features unsupported.
 		let mut vec = vec![];
-		ser::serialize_default(&mut vec, &(5u8)).expect("serialized failed");
+		ser::serialize_default(&mut vec, &(6u8)).expect("serialized failed");
 		let res: Result<KernelFeatures, _> = ser::deserialize_default(&mut &vec[..]);
 		assert_eq!(res.err(), Some(ser::Error::CorruptedData));
 
@@ -2714,9 +3715,9 @@ mod test {
 		let res: Result<KernelFeatures, _> = ser::deserialize_default(&mut &vec[..]);
 		assert_eq!(res.err(), Some(ser::Error::CorruptedData));
 
-		// Kernel variant 5 (and above) is invalid.
+		// Kernel variant 6 (and above) is invalid.
 		let mut vec = vec![];
-		ser::serialize_default(&mut vec, &(5u8))?;
+		ser::serialize_default(&mut vec, &(6u8))?;
 		let res: Result<KernelFeatures, _> = ser::deserialize_default(&mut &vec[..]);
 		assert_eq!(res.err(), Some(ser::Error::CorruptedData));
 

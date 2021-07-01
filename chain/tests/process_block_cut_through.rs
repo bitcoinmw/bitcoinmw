@@ -19,75 +19,23 @@ use grin_core as core;
 use grin_keychain as keychain;
 use grin_util as util;
 
-use self::chain_test_helper::{clean_output_dir, genesis_block, init_chain};
-use crate::chain::{pipe, Chain, Options};
+use self::chain_test_helper::{build_block, clean_output_dir, genesis_block, init_chain};
+use crate::chain::{pipe, Options};
 use crate::core::core::verifier_cache::LruVerifierCache;
-use crate::core::core::{block, pmmr, transaction};
-use crate::core::core::{Block, FeeFields, KernelFeatures, Transaction, Weighting};
-use crate::core::libtx::{build, reward, ProofBuilder};
-use crate::core::{consensus, global, pow};
-use crate::keychain::{ExtKeychain, ExtKeychainPath, Keychain, SwitchCommitmentType};
+use crate::core::core::{block, transaction};
+use crate::core::core::{FeeFields, KernelFeatures, Weighting};
+use crate::core::libtx::{build, ProofBuilder};
+use crate::core::{consensus, global};
+use crate::keychain::{ExtKeychain, Keychain};
 use crate::util::RwLock;
-use chrono::Duration;
+use grin_core::address::Address;
+use grin_core::libtx::proof::PaymentId;
+use rand::thread_rng;
 use std::sync::Arc;
-
-fn build_block<K>(
-	chain: &Chain,
-	keychain: &K,
-	txs: &[Transaction],
-	skip_roots: bool,
-) -> Result<Block, chain::Error>
-where
-	K: Keychain,
-{
-	let prev = chain.head_header().unwrap();
-	let next_height = prev.height + 1;
-	let next_header_info = consensus::next_difficulty(1, chain.difficulty_iter()?);
-	let fee = txs.iter().map(|x| x.fee(next_height)).sum();
-	let key_id = ExtKeychainPath::new(1, next_height as u32, 0, 0, 0).to_identifier();
-	let reward = reward::output(
-		keychain,
-		&ProofBuilder::new(keychain),
-		&key_id,
-		fee,
-		false,
-		prev.height + 1,
-	)
-	.unwrap();
-
-	let mut block = Block::new(&prev, txs, next_header_info.clone().difficulty, reward)?;
-
-	block.header.timestamp = prev.timestamp + Duration::seconds(60);
-	block.header.pow.secondary_scaling = next_header_info.secondary_scaling;
-
-	// If we are skipping roots then just set the header prev_root and skip the other MMR roots.
-	// This allows us to build a header for an "invalid" block by ignoring outputs and kernels.
-	if skip_roots {
-		chain.set_prev_root_only(&mut block.header)?;
-
-		// Manually set the mmr sizes for a "valid" block (increment prev output and kernel counts).
-		block.header.output_mmr_size = pmmr::insertion_to_pmmr_index(prev.output_mmr_count() + 1);
-		block.header.kernel_mmr_size = pmmr::insertion_to_pmmr_index(prev.kernel_mmr_count() + 1);
-	} else {
-		chain.set_txhashset_roots(&mut block)?;
-	}
-
-	let edge_bits = global::min_edge_bits();
-	block.header.pow.proof.edge_bits = edge_bits;
-	pow::pow_size(
-		&mut block.header,
-		next_header_info.difficulty,
-		global::proofsize(),
-		edge_bits,
-	)
-	.unwrap();
-
-	Ok(block)
-}
 
 #[test]
 fn process_block_cut_through() -> Result<(), chain::Error> {
-	let chain_dir = ".grin.cut_through";
+	let chain_dir = ".bmw.cut_through";
 	global::set_local_chain_type(global::ChainTypes::AutomatedTesting);
 	util::init_test_logger();
 	clean_output_dir(chain_dir);
@@ -96,16 +44,35 @@ fn process_block_cut_through() -> Result<(), chain::Error> {
 	let pb = ProofBuilder::new(&keychain);
 	let genesis = genesis_block(&keychain);
 	let chain = init_chain(chain_dir, genesis.clone());
+	let mut pri_views = vec![];
+	let mut outputs = vec![];
+	let mut pri_nonces = vec![];
+	let mut recipient_addrs = vec![];
 
 	// Mine a few empty blocks.
 	for _ in 1..6 {
-		let block = build_block(&chain, &keychain, &[], false)?;
-		chain.process_block(block, Options::MINE)?;
+		let (pri_view, pub_view) = keychain.secp().generate_keypair(&mut thread_rng()).unwrap();
+		pri_views.push(pri_view);
+		let recipient_addr =
+			Address::from_one_pubkey(&pub_view, global::ChainTypes::AutomatedTesting);
+		recipient_addrs.push(recipient_addr.clone());
+		let (private_nonce, _pub_nonce) =
+			keychain.secp().generate_keypair(&mut thread_rng()).unwrap();
+		pri_nonces.push(private_nonce.clone());
+		let block = build_block(
+			&chain,
+			&keychain,
+			(&[]).to_vec(),
+			recipient_addr,
+			private_nonce,
+			true,
+		);
+		outputs.push(block.outputs()[0]);
+		chain.process_block(block.clone(), Options::MINE)?;
 	}
 
-	let key_id1 = ExtKeychainPath::new(1, 1, 0, 0, 0).to_identifier();
-	let key_id2 = ExtKeychainPath::new(1, 2, 0, 0, 0).to_identifier();
-	let key_id3 = ExtKeychainPath::new(1, 3, 0, 0, 0).to_identifier();
+	let index0: u64 = chain.get_output_pos(&outputs[0].commitment()).unwrap() - 1;
+	let index1: u64 = chain.get_output_pos(&outputs[1].commitment()).unwrap() - 1;
 
 	// Build a tx that spends a couple of early coinbase outputs and produces some new outputs.
 	// Note: We reuse key_ids resulting in an input and an output sharing the same commitment.
@@ -115,11 +82,16 @@ fn process_block_cut_through() -> Result<(), chain::Error> {
 			fee: FeeFields::zero(),
 		},
 		&[
-			build::coinbase_input(consensus::REWARD1, key_id1.clone()),
-			build::coinbase_input(consensus::REWARD1, key_id2.clone()),
-			build::output(312_500_000, key_id1.clone()),
-			build::output(212_500_000, key_id2.clone()),
-			build::output(100_000_000, key_id3.clone()),
+			build::input(consensus::REWARD1, pri_views[0].clone(), outputs[0], index0),
+			build::input(consensus::REWARD1, pri_views[1].clone(), outputs[1], index1),
+			build::output_wrnp(
+				consensus::REWARD1,
+				pri_nonces[0].clone(),
+				recipient_addrs[0].clone(),
+				PaymentId::new(),
+			),
+			build::output_rand(212_500_000),
+			build::output_rand(100_000_000),
 		],
 		&keychain,
 		&pb,
@@ -127,7 +99,18 @@ fn process_block_cut_through() -> Result<(), chain::Error> {
 	.expect("valid tx");
 
 	// The offending commitment, reused in both an input and an output.
-	let commit = keychain.commit(312_500_000, &key_id1, SwitchCommitmentType::Regular)?;
+	let commit = build::output_wrnp_impl(
+		&keychain,
+		&pb,
+		consensus::REWARD1,
+		&pri_nonces[0].clone(),
+		&recipient_addrs[0].clone(),
+		PaymentId::new(),
+	)
+	.unwrap()
+	.0
+	.identifier
+	.commit;
 	let inputs: Vec<_> = tx.inputs().into();
 	assert!(inputs.iter().any(|input| input.commitment() == commit));
 	assert!(tx
@@ -140,7 +123,13 @@ fn process_block_cut_through() -> Result<(), chain::Error> {
 	// Transaction is invalid due to cut-through.
 	let height = 7;
 	assert_eq!(
-		tx.validate(Weighting::AsTransaction, verifier_cache.clone(), height),
+		tx.validate(
+			Weighting::AsTransaction,
+			verifier_cache.clone(),
+			height,
+			None,
+			None,
+		),
 		Err(transaction::Error::CutThrough),
 	);
 
@@ -150,13 +139,23 @@ fn process_block_cut_through() -> Result<(), chain::Error> {
 		Err(chain::ErrorKind::DuplicateCommitment(commit)),
 	);
 
+	let (_pri_view, pub_view) = keychain.secp().generate_keypair(&mut thread_rng()).unwrap();
+	let recipient_addr = Address::from_one_pubkey(&pub_view, global::ChainTypes::AutomatedTesting);
+	let (private_nonce, _pub_nonce) = keychain.secp().generate_keypair(&mut thread_rng()).unwrap();
 	// Build a block with this single invalid transaction.
-	let block = build_block(&chain, &keychain, &[tx.clone()], true)?;
+	let block = build_block(
+		&chain,
+		&keychain,
+		(&[tx.clone()]).to_vec(),
+		recipient_addr,
+		private_nonce,
+		false,
+	);
 
 	// The block is invalid due to cut-through.
 	let prev = chain.head_header()?;
 	assert_eq!(
-		block.validate(&prev.total_kernel_offset(), verifier_cache),
+		block.validate(&prev.total_kernel_offset(), verifier_cache, None),
 		Err(block::Error::Transaction(transaction::Error::CutThrough))
 	);
 

@@ -64,8 +64,17 @@ pub struct ServerStats {
 	pub diff_stats: DiffStats,
 	/// Transaction pool statistics
 	pub tx_stats: Option<TxStats>,
+	/// BTC Utxo Stats
+	pub utxo_stats: UtxoStats,
 	/// Disk usage in GB
 	pub disk_usage_gb: String,
+}
+
+/// BTC Utxo Statistics
+#[derive(Clone, Serialize, Debug)]
+pub struct UtxoStats {
+	/// Percent of the BTC Utxo Set Downloaded (u8::Max means complete as opposed to displaying 100%)
+	pub percentage: u8,
 }
 
 /// Chain Statistics

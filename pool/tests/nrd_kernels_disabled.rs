@@ -23,6 +23,7 @@ use self::pool::types::PoolError;
 use self::util::RwLock;
 use crate::common::*;
 use grin_core as core;
+use grin_core::core::hash::Hashed;
 use grin_keychain as keychain;
 use grin_pool as pool;
 use grin_util as util;
@@ -56,8 +57,16 @@ fn test_nrd_kernels_disabled() {
 
 	// Spend the initial coinbase.
 	let header_1 = chain.get_header_by_height(1).unwrap();
-	let tx =
-		test_transaction_spending_coinbase(&keychain, &header_1, vec![1_000, 2_000, 3_000, 4_000]);
+	let block_1 = chain.get_block(&header_1.hash()).unwrap();
+	let output = block_1.outputs()[0];
+	let index: u64 = chain.get_output_pos(&output.commitment()).unwrap() - 1;
+	let tx = test_transaction_spending_coinbase(
+		&keychain,
+		&header_1,
+		output,
+		index,
+		vec![1_000, 2_000, 3_000, 4_000],
+	);
 	add_block(&chain, &[tx], &keychain);
 
 	let tx_1 = test_transaction_with_kernel_features(
@@ -68,6 +77,7 @@ fn test_nrd_kernels_disabled() {
 			fee: 600.into(),
 			relative_height: NRDRelativeHeight::new(1440).unwrap(),
 		},
+		&chain,
 	);
 
 	let header = chain.head_header().unwrap();

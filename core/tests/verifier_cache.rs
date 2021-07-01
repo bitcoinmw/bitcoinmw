@@ -20,6 +20,9 @@ use self::core::libtx::proof;
 use grin_core as core;
 use keychain::{ExtKeychain, Keychain, SwitchCommitmentType};
 use std::sync::Arc;
+use util::secp::key::PublicKey;
+use util::secp::key::SecretKey;
+use util::secp::Signature;
 use util::RwLock;
 
 fn verifier_cache() -> Arc<RwLock<dyn VerifierCache>> {
@@ -37,7 +40,27 @@ fn test_verifier_cache_rangeproofs() {
 	let builder = proof::ProofBuilder::new(&keychain);
 	let proof = proof::create(&keychain, &builder, 5, &key_id, switch, commit, None).unwrap();
 
-	let out = Output::new(OutputFeatures::Plain, commit, proof);
+	let skey = SecretKey::from_slice(
+		&keychain.secp(),
+		&[
+			0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+			0, 0, 1,
+		],
+	)
+	.unwrap();
+
+	let nonce = PublicKey::from_secret_key(&keychain.secp(), &skey).unwrap();
+	let onetime_pubkey = PublicKey::from_secret_key(&keychain.secp(), &skey).unwrap();
+
+	let out = Output::new(
+		OutputFeatures::Plain,
+		commit,
+		proof,
+		Signature::from_raw_data(&[0; 64]).unwrap(), /* r_sig */
+		0,
+		nonce,
+		onetime_pubkey,
+	);
 
 	// Check our output is not verified according to the cache.
 	{

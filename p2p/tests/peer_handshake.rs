@@ -59,12 +59,15 @@ fn peer_handshake() {
 	let net_adapter = Arc::new(p2p::DummyAdapter {});
 	let server = Arc::new(
 		p2p::Server::new(
-			".grin",
+			".bmw",
 			p2p::Capabilities::UNKNOWN,
 			p2p_config.clone(),
 			net_adapter.clone(),
 			Hash::from_vec(&vec![]),
 			Arc::new(StopState::new()),
+			3417,
+			"mytoraddress".to_string(),
+			None,
 		)
 		.unwrap(),
 	);
@@ -76,15 +79,23 @@ fn peer_handshake() {
 
 	let addr = SocketAddr::new(p2p_config.host, p2p_config.port);
 	let socket = TcpStream::connect_timeout(&addr, time::Duration::from_secs(10)).unwrap();
-
-	let my_addr = PeerAddr("127.0.0.1:5000".parse().unwrap());
+	println!("socket={:?}", socket);
+	let my_addr = PeerAddr::Ip("127.0.0.1:5000".parse().unwrap());
+	println!("1");
+	println!("myaddr: {:?}", my_addr);
 	let peer = Peer::connect(
 		socket,
 		p2p::Capabilities::UNKNOWN,
 		Difficulty::min_dma(),
-		my_addr,
-		&p2p::handshake::Handshake::new(Hash::from_vec(&vec![]), p2p_config.clone()),
+		my_addr.clone(),
+		&p2p::handshake::Handshake::new(
+			Hash::from_vec(&vec![]),
+			p2p_config.clone(),
+			"mytoraddress".to_string(),
+		),
 		net_adapter,
+		None,
+		None,
 	)
 	.unwrap();
 

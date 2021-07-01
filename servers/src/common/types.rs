@@ -13,109 +13,204 @@
 // limitations under the License.
 
 //! Server types
+use crate::util::OnionV3AddressError;
 use std::convert::From;
 use std::sync::Arc;
 
 use chrono::prelude::Utc;
+use failure::{Context, Fail};
 use rand::prelude::*;
+use std::time::SystemTimeError;
 
-use crate::api;
-use crate::chain;
 use crate::core::global::{ChainTypes, DEFAULT_FUTURE_TIME_LIMIT};
-use crate::core::{core, libtx, pow};
-use crate::keychain;
+pub use crate::core::{core, libtx, pow};
 use crate::p2p;
 use crate::pool;
 use crate::pool::types::DandelionConfig;
-use crate::store;
 
-/// Error type wrapping underlying module errors.
-#[derive(Debug)]
-pub enum Error {
-	/// Error originating from the core implementation.
-	Core(core::block::Error),
-	/// Error originating from the libtx implementation.
-	LibTx(libtx::Error),
-	/// Error originating from the db storage.
-	Store(store::Error),
-	/// Error originating from the blockchain implementation.
-	Chain(chain::Error),
-	/// Error originating from the peer-to-peer network.
-	P2P(p2p::Error),
-	/// Error originating from HTTP API calls.
-	API(api::Error),
-	/// Error originating from the cuckoo miner
-	Cuckoo(pow::Error),
-	/// Error originating from the transaction pool.
-	Pool(pool::PoolError),
-	/// Error originating from the keychain.
-	Keychain(keychain::Error),
-	/// Invalid Arguments.
-	ArgumentError(String),
-	/// Wallet communication error
-	WalletComm(String),
-	/// Error originating from some I/O operation (likely a file on disk).
-	IOError(std::io::Error),
-	/// Configuration error
+/// Wallet errors, mostly wrappers around underlying crypto or I/O errors.
+#[derive(Clone, Eq, PartialEq, Debug, Fail)]
+pub enum ErrorKind {
+	/// Tor Configuration Error
+	#[fail(display = "Tor Config Error: {}", _0)]
+	TorConfig(String),
+
+	/// Configuration Error
+	#[fail(display = "Configuration Error: {}", _0)]
 	Configuration(String),
-	/// General error
-	General(String),
+
+	/// Argument Error
+	#[fail(display = "Argument Error: {}", _0)]
+	ArgumentError(String),
+
+	/// RecvError
+	#[fail(display = "RecvError: {}", _0)]
+	RecvError(String),
+
+	/// Error origining for a Core Error
+	#[fail(display = "Core Error: {}", _0)]
+	Core(String),
+
+	/// Wallet communication Error
+	#[fail(display = "Wallet comm Error: {}", _0)]
+	WalletComm(String),
+
+	/// Chain Error
+	#[fail(display = "Chain error: {}", _0)]
+	Chain(String),
+
+	/// Tor Process error
+	#[fail(display = "Tor Process Error: {}", _0)]
+	TorProcess(String),
+
+	/// Onion V3 Address Error
+	#[fail(display = "Onion V3 Address Error: {}", _0)]
+	OnionV3Address(String),
+
+	/// Error when formatting json
+	#[fail(display = "IO error, {}", _0)]
+	IO(String),
+
+	/// Generating ED25519 Public Key
+	#[fail(display = "Error generating ed25519 secret key: {}", _0)]
+	ED25519Key(String),
+
+	/// Checking for onion address
+	#[fail(display = "Address is not an Onion v3 Address: {}", _0)]
+	NotOnion(String),
+
+	/// Internal error
+	#[fail(display = "Internal Error: {}", _0)]
+	InternalError(String),
+
+	/// API Error
+	#[fail(display = "API Error: {}", _0)]
+	API(String),
+
+	/// P2P Error
+	#[fail(display = "P2P Error: {}", _0)]
+	P2P(String),
+
+	/// Error originating from a Block error
+	#[fail(display = "Block Error: {}", _0)]
+	Block(String),
+
+	/// KeyChain Error
+	#[fail(display = "Keychain Error: {}", _0)]
+	KeyChain(String),
 }
 
-impl From<core::block::Error> for Error {
-	fn from(e: core::block::Error) -> Error {
-		Error::Core(e)
+/// Error definition
+#[derive(Debug)]
+pub struct Error {
+	/// Inner Error
+	pub inner: Context<ErrorKind>,
+}
+
+impl From<ErrorKind> for Error {
+	fn from(kind: ErrorKind) -> Error {
+		Error {
+			inner: Context::new(kind),
+		}
 	}
 }
-impl From<chain::Error> for Error {
-	fn from(e: chain::Error) -> Error {
-		Error::Chain(e)
+
+impl From<failure::Context<ErrorKind>> for Error {
+	fn from(e: failure::Context<ErrorKind>) -> Error {
+		Error {
+			inner: Context::new(ErrorKind::InternalError(e.to_string())),
+		}
 	}
 }
+
+impl From<SystemTimeError> for Error {
+	fn from(e: SystemTimeError) -> Error {
+		Error {
+			inner: Context::new(ErrorKind::InternalError(format!(
+				"SystemTimeError: {:?}",
+				e
+			))),
+		}
+	}
+}
+
+impl From<grin_core::address::Error> for Error {
+	fn from(e: grin_core::address::Error) -> Error {
+		Error {
+			inner: Context::new(ErrorKind::InternalError(format!("{:?}", e))),
+		}
+	}
+}
+
+impl From<bmw_utxo::error::Error> for Error {
+	fn from(e: bmw_utxo::error::Error) -> Error {
+		Error {
+			inner: Context::new(ErrorKind::InternalError(format!("{:?}", e))),
+		}
+	}
+}
+
+impl From<std::sync::mpsc::RecvError> for Error {
+	fn from(e: std::sync::mpsc::RecvError) -> Error {
+		Error {
+			inner: Context::new(ErrorKind::InternalError(e.to_string())),
+		}
+	}
+}
+
+impl From<OnionV3AddressError> for Error {
+	fn from(error: OnionV3AddressError) -> Error {
+		Error {
+			inner: Context::new(ErrorKind::OnionV3Address(error.to_string())),
+		}
+	}
+}
+
+impl From<grin_keychain::Error> for Error {
+	fn from(error: grin_keychain::Error) -> Error {
+		Error {
+			inner: Context::new(ErrorKind::KeyChain(error.to_string())),
+		}
+	}
+}
+
+impl From<grin_p2p::Error> for Error {
+	fn from(error: grin_p2p::Error) -> Error {
+		Error {
+			inner: Context::new(ErrorKind::P2P(format!("{:?}", error))),
+		}
+	}
+}
+
+impl From<grin_api::Error> for Error {
+	fn from(error: grin_api::Error) -> Error {
+		Error {
+			inner: Context::new(ErrorKind::API(error.to_string())),
+		}
+	}
+}
+
+impl From<grin_chain::Error> for Error {
+	fn from(error: grin_chain::Error) -> Error {
+		Error {
+			inner: Context::new(ErrorKind::Chain(error.to_string())),
+		}
+	}
+}
+
+impl From<grin_core::core::block::Error> for Error {
+	fn from(error: grin_core::core::block::Error) -> Error {
+		Error {
+			inner: Context::new(ErrorKind::Block(error.to_string())),
+		}
+	}
+}
+
 impl From<std::io::Error> for Error {
-	fn from(e: std::io::Error) -> Error {
-		Error::IOError(e)
-	}
-}
-impl From<p2p::Error> for Error {
-	fn from(e: p2p::Error) -> Error {
-		Error::P2P(e)
-	}
-}
-
-impl From<pow::Error> for Error {
-	fn from(e: pow::Error) -> Error {
-		Error::Cuckoo(e)
-	}
-}
-
-impl From<store::Error> for Error {
-	fn from(e: store::Error) -> Error {
-		Error::Store(e)
-	}
-}
-
-impl From<api::Error> for Error {
-	fn from(e: api::Error) -> Error {
-		Error::API(e)
-	}
-}
-
-impl From<pool::PoolError> for Error {
-	fn from(e: pool::PoolError) -> Error {
-		Error::Pool(e)
-	}
-}
-
-impl From<keychain::Error> for Error {
-	fn from(e: keychain::Error) -> Error {
-		Error::Keychain(e)
-	}
-}
-
-impl From<libtx::Error> for Error {
-	fn from(e: libtx::Error) -> Error {
-		Error::LibTx(e)
+	fn from(error: std::io::Error) -> Error {
+		Error {
+			inner: Context::new(ErrorKind::IO(error.to_string())),
+		}
 	}
 }
 
@@ -206,6 +301,9 @@ pub struct ServerConfig {
 	/// Configuration for the webhooks that trigger on certain events
 	#[serde(default)]
 	pub webhook_config: WebHooksConfig,
+
+	/// Bypass the checksum check for the utxo_data (must only be used for testing)
+	pub bypass_checksum: Option<bool>,
 }
 
 fn default_future_time_limit() -> u64 {
@@ -215,7 +313,7 @@ fn default_future_time_limit() -> u64 {
 impl Default for ServerConfig {
 	fn default() -> ServerConfig {
 		ServerConfig {
-			db_root: "grin_chain".to_string(),
+			db_root: "bmw_chain".to_string(),
 			api_http_addr: "127.0.0.1:3413".to_string(),
 			api_secret_path: Some(".api_secret".to_string()),
 			foreign_api_secret_path: Some(".foreign_api_secret".to_string()),
@@ -235,6 +333,7 @@ impl Default for ServerConfig {
 			test_miner_wallet_url: None,
 			webhook_config: WebHooksConfig::default(),
 			binary_location: None,
+			bypass_checksum: None,
 		}
 	}
 }
@@ -257,7 +356,7 @@ pub struct StratumServerConfig {
 	pub minimum_share_difficulty: u64,
 
 	/// Base address to the HTTP wallet receiver
-	pub wallet_listener_url: String,
+	pub recipient_address: String,
 
 	/// Attributes the reward to a random private key instead of contacting the
 	/// wallet receiver. Mostly used for tests.
@@ -267,7 +366,7 @@ pub struct StratumServerConfig {
 impl Default for StratumServerConfig {
 	fn default() -> StratumServerConfig {
 		StratumServerConfig {
-			wallet_listener_url: "http://127.0.0.1:3415".to_string(),
+			recipient_address: "replace".to_string(),
 			burn_reward: false,
 			attempt_time_per_block: 15,
 			minimum_share_difficulty: 1,
@@ -365,7 +464,7 @@ impl DandelionEpoch {
 		let mut rng = rand::thread_rng();
 		self.is_stem = rng.gen_range(0, 100) < stem_probability;
 
-		let addr = self.relay_peer.clone().map(|p| p.info.addr);
+		let addr = self.relay_peer.clone().map(|p| p.info.addr.clone());
 		info!(
 			"DandelionEpoch: next_epoch: is_stem: {} ({}%), relay: {:?}",
 			self.is_stem, stem_probability, addr
@@ -402,7 +501,7 @@ impl DandelionEpoch {
 			self.relay_peer = peers.iter().outbound().connected().choose_random();
 			info!(
 				"DandelionEpoch: relay_peer: new peer chosen: {:?}",
-				self.relay_peer.clone().map(|p| p.info.addr)
+				self.relay_peer.clone().map(|p| p.info.addr.clone())
 			);
 		}
 

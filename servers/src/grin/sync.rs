@@ -18,5 +18,6 @@ mod body_sync;
 mod header_sync;
 mod state_sync;
 mod syncer;
+mod utxo_sync;
 
 pub use self::syncer::run_sync;

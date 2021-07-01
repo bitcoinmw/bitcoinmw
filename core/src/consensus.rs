@@ -189,10 +189,9 @@ fn get_overage_offset_start_epoch(num: u64) -> u64 {
 }
 
 /// Calculate block overage based on height and claimed BTCUtxos
-/// TODO: add in BTCUtxos
 pub fn calc_block_overage(height: u64) -> u64 {
 	if height == 0 {
-		1
+		0
 	} else if height <= get_epoch_start(2) {
 		(REWARD1 * height) + get_overage_offset_start_epoch(1)
 	} else if height <= get_epoch_start(3) {

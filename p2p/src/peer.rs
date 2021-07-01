@@ -12,13 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::msg::BtcUtxoSetRequest;
 use crate::util::{Mutex, RwLock};
+use bmw_utxo::utxo_data::UtxoData;
 use std::fmt;
 use std::fs::File;
 use std::net::{Shutdown, TcpStream};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::Weak;
 
 use lru_cache::LruCache;
 
@@ -65,6 +68,7 @@ pub struct Peer {
 	stop_handle: Mutex<conn::StopHandle>,
 	// Whether or not we requested a txhashset from this peer
 	state_sync_requested: Arc<AtomicBool>,
+	// Whether or not we requested a utxo index from this peer
 }
 
 impl fmt::Debug for Peer {
@@ -75,7 +79,12 @@ impl fmt::Debug for Peer {
 
 impl Peer {
 	// Only accept and connect can be externally used to build a peer
-	fn new(info: PeerInfo, conn: TcpStream, adapter: Arc<dyn NetAdapter>) -> std::io::Result<Peer> {
+	fn new(
+		info: PeerInfo,
+		conn: TcpStream,
+		adapter: Arc<dyn NetAdapter>,
+		utxo_data: Option<Weak<RwLock<UtxoData>>>,
+	) -> std::io::Result<Peer> {
 		let state = Arc::new(RwLock::new(State::Connected));
 		let state_sync_requested = Arc::new(AtomicBool::new(false));
 		let tracking_adapter = TrackingAdapter::new(adapter);
@@ -83,6 +92,7 @@ impl Peer {
 			Arc::new(tracking_adapter.clone()),
 			info.clone(),
 			state_sync_requested.clone(),
+			utxo_data,
 		);
 		let tracker = Arc::new(conn::Tracker::new());
 		let (sendh, stoph) = conn::listen(conn, info.version, tracker.clone(), handler)?;
@@ -105,11 +115,12 @@ impl Peer {
 		total_difficulty: Difficulty,
 		hs: &Handshake,
 		adapter: Arc<dyn NetAdapter>,
+		utxo_data: Option<Weak<RwLock<UtxoData>>>,
 	) -> Result<Peer, Error> {
 		debug!("accept: handshaking from {:?}", conn.peer_addr());
 		let info = hs.accept(capab, total_difficulty, &mut conn);
 		match info {
-			Ok(info) => Ok(Peer::new(info, conn, adapter)?),
+			Ok(info) => Ok(Peer::new(info, conn, adapter, utxo_data)?),
 			Err(e) => {
 				debug!(
 					"accept: handshaking from {:?} failed with error: {:?}",
@@ -131,11 +142,13 @@ impl Peer {
 		self_addr: PeerAddr,
 		hs: &Handshake,
 		adapter: Arc<dyn NetAdapter>,
+		peer_addr: Option<PeerAddr>,
+		utxo_data: Option<Weak<RwLock<UtxoData>>>,
 	) -> Result<Peer, Error> {
-		debug!("connect: handshaking with {:?}", conn.peer_addr());
-		let info = hs.initiate(capab, total_difficulty, self_addr, &mut conn);
+		debug!("connect: handshaking with {:?}", peer_addr);
+		let info = hs.initiate(capab, total_difficulty, self_addr, &mut conn, peer_addr);
 		match info {
-			Ok(info) => Ok(Peer::new(info, conn, adapter)?),
+			Ok(info) => Ok(Peer::new(info, conn, adapter, utxo_data)?),
 			Err(e) => {
 				debug!(
 					"connect: handshaking with {:?} failed with error: {:?}",
@@ -326,6 +339,11 @@ impl Peer {
 			);
 			Ok(false)
 		}
+	}
+
+	/// Request the BTC utxo set file
+	pub fn send_utxo_request(&self, req: BtcUtxoSetRequest) -> Result<(), Error> {
+		self.send(req, msg::Type::GetBtcUtxoSetChunk)
 	}
 
 	/// Sends the provided stem transaction to the remote peer.

@@ -245,6 +245,8 @@ fn decode_message(
 		Type::RangeProofSegment => Message::RangeProofSegment(msg.body()?),
 		Type::GetKernelSegment => Message::GetKernelSegment(msg.body()?),
 		Type::KernelSegment => Message::KernelSegment(msg.body()?),
+		Type::GetBtcUtxoSetChunk => Message::GetBtcUtxoSetChunk(msg.body()?),
+		Type::BtcUtxoSetChunk => Message::BtcUtxoSetChunk(msg.body()?),
 		Type::Error | Type::Hand | Type::Shake | Type::Headers => {
 			return Err(Error::UnexpectedMessage)
 		}

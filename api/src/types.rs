@@ -30,7 +30,7 @@ macro_rules! no_dup {
 	($field:ident) => {
 		if $field.is_some() {
 			return Err(serde::de::Error::duplicate_field("$field"));
-			}
+		}
 	};
 }
 
@@ -41,6 +41,23 @@ pub struct Version {
 	pub node_version: String,
 	/// Block header version
 	pub block_header_version: u16,
+}
+
+/// A response to a scan request
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ScanResponse {
+	/// IsSyncing - if node is syncing, this is set true and no other data is set
+	/// results are not reliable while node is syncing
+	pub is_syncing: bool,
+	/// The last pmmr index which was valid based on the headers sent by the client
+	pub last_pmmr_index: u64,
+	/// A new set of checkpoint headers to send on the next request
+	pub headers: Vec<(String, u64, u64)>,
+	/// A list of (output pmmr index, height, Output) Tuples that are new to
+	/// this client based on input headers sent
+	pub outputs: Vec<(u64, u64, grin_core::core::Output)>,
+	/// a list of mmrs that have been spent based on input list
+	pub mmr_spent: Vec<u64>,
 }
 
 /// The status of a particular btc claim address
@@ -525,13 +542,14 @@ impl TxKernelPrintable {
 		let features = k.features.as_string();
 		let (fee_fields, lock_height) = match k.features {
 			KernelFeatures::Plain { fee } => (fee, 0),
-			KernelFeatures::Coinbase => (FeeFields::zero(), 0),
+			KernelFeatures::Coinbase { .. } => (FeeFields::zero(), 0),
 			KernelFeatures::HeightLocked { fee, lock_height } => (fee, lock_height),
 			KernelFeatures::NoRecentDuplicate {
 				fee,
 				relative_height,
 			} => (fee, relative_height.into()),
-			KernelFeatures::BitcoinInit { fee, index, .. } => (fee, index as u64),
+			KernelFeatures::BTCClaim { fee, .. } => (fee, 0),
+			KernelFeatures::Burn { fee, .. } => (fee, 0),
 		};
 		let height = 2 * YEAR_HEIGHT; // print as if post-HF4
 		let fee = fee_fields.fee(height);

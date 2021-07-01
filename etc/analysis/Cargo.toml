@@ -1,0 +1,25 @@
+[package]
+name = "gen_analysis"
+version = "0.0.1"
+edition = "2018"
+authors = ["BitcoinMW Developers <bitcoinmw@protonmail.com>"]
+description = "Utility to create the initial UTXO Set from Bitcoin Core"
+license = "Apache-2.0"
+repository = "https://github.com/bitcoinmw/bitcoinmw"
+keywords = [ "crypto", "mimblewimble", "bitcoin"]
+readme = "README.md"
+
+[[bin]]
+name = "gen_analysis"
+path = "src/bin/gen_analysis.rs"
+
+[dependencies]
+structopt = { version = "0.3", default-features = false }
+byteorder = { version = "1.4.2" }
+byte-tools = "0.3.1"
+failure = "0.1"
+failure_derive = "0.1"
+util = { package = "grin_util", path = "../../util", version = "0.0.1" }
+
+[dependencies.hex]
+version = "=0.3.2"

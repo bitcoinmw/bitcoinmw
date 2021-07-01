@@ -1,5 +1,5 @@
 [package]
-name = "build_btc_utxo_set"
+name = "gen_log"
 version = "0.0.1"
 edition = "2018"
 authors = ["BitcoinMW Developers <bitcoinmw@protonmail.com>"]
@@ -10,14 +10,21 @@ keywords = [ "crypto", "mimblewimble", "bitcoin"]
 readme = "README.md"
 
 [[bin]]
-name = "gen_bin"
-path = "src/bin/build_btc_utxo_bin.rs"
+name = "gen_log"
+path = "src/bin/gen_log.rs"
 
 [dependencies]
 structopt = { version = "0.3", default-features = false }
-byteorder = { version = "1.4.2" }
-rust-base58 = { version = "0.0.4" }
-bech32 = { version = "0.7.2" }
+libc = "0.2.82"
+nix = "0.19.1"
+serde_json = "1"
+serde = "1"
+serde_derive = "1"
+bitcoin = "0.25.0"
+bitcoin_hashes = "0.9.0"
+rand = "0.7.3"
+secp256k1 = {version = "0.8.0", features = ["rand"]}
+util = { package = "grin_util", path = "../../util" }
 
 [dependencies.hex]
 version = "=0.3.2"

@@ -44,7 +44,7 @@ pub mod built_info {
 pub fn info_strings() -> (String, String) {
 	(
 		format!(
-			"This is Grin version {}{}, built for {} by {}.",
+			"This is BMW version {}{}, built for {} by {}.",
 			built_info::PKG_VERSION,
 			built_info::GIT_VERSION.map_or_else(|| "".to_owned(), |v| format!(" (git {})", v)),
 			built_info::TARGET,
@@ -74,7 +74,7 @@ fn main() {
 }
 
 fn real_main() -> i32 {
-	let yml = load_yaml!("grin.yml");
+	let yml = load_yaml!("bmw.yml");
 	let args = App::from_yaml(yml)
 		.version(built_info::PKG_VERSION)
 		.get_matches();
@@ -156,7 +156,7 @@ fn real_main() -> i32 {
 	match global::get_chain_type() {
 		global::ChainTypes::Mainnet => {
 			// Set various mainnet specific feature flags.
-			global::init_global_nrd_enabled(false);
+			global::init_global_nrd_enabled(true);
 		}
 		_ => {
 			// Set various non-mainnet feature flags.

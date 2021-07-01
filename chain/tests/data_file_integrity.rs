@@ -24,7 +24,7 @@ use self::chain_test_helper::{clean_output_dir, init_chain, mine_chain};
 fn data_files() {
 	util::init_test_logger();
 
-	let chain_dir = ".grin_df";
+	let chain_dir = ".bmw_df";
 	clean_output_dir(chain_dir);
 
 	// Mine a few blocks on a new chain.

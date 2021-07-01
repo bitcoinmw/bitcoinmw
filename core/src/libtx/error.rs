@@ -13,7 +13,9 @@
 // limitations under the License.
 
 //! libtx specific errors
+use crate::address;
 use crate::core::transaction;
+use crate::ser;
 use failure::{Backtrace, Context, Fail};
 use keychain;
 use std::fmt::{self, Display};
@@ -43,6 +45,15 @@ pub enum ErrorKind {
 	/// Rangeproof error
 	#[fail(display = "Rangeproof Error")]
 	RangeProof(String),
+	/// Invalid PaymentId
+	#[fail(display = "Invalid Payment Id")]
+	InvalidPaymentId,
+	/// Address error
+	#[fail(display = "Address error")]
+	Address(address::Error),
+	/// Address error
+	#[fail(display = "Ser error")]
+	SerError(ser::Error),
 	/// Other error
 	#[fail(display = "Other Error")]
 	Other(String),
@@ -105,6 +116,22 @@ impl From<transaction::Error> for Error {
 	fn from(error: transaction::Error) -> Error {
 		Error {
 			inner: Context::new(ErrorKind::Transaction(error)),
+		}
+	}
+}
+
+impl From<address::Error> for Error {
+	fn from(error: address::Error) -> Error {
+		Error {
+			inner: Context::new(ErrorKind::Address(error)),
+		}
+	}
+}
+
+impl From<ser::Error> for Error {
+	fn from(error: ser::Error) -> Error {
+		Error {
+			inner: Context::new(ErrorKind::SerError(error)),
 		}
 	}
 }

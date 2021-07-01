@@ -20,9 +20,11 @@ use crate::router::{Handler, ResponseFuture};
 use crate::types::*;
 use crate::util;
 use crate::util::secp::pedersen::Commitment;
+use crate::util::RwLock;
 use crate::web::*;
-use bitcoinmw_loader::loader::UtxoData;
+use bmw_utxo::utxo_data::UtxoData;
 use failure::ResultExt;
+use grin_util::ToHex;
 use hyper::{Body, Request, StatusCode};
 use std::convert::TryInto;
 use std::sync::Weak;
@@ -31,7 +33,7 @@ use std::sync::Weak;
 /// GET /v1/chain
 pub struct ChainHandler {
 	pub chain: Weak<chain::Chain>,
-	pub utxo_data: Weak<UtxoData>,
+	pub utxo_data: Weak<RwLock<UtxoData>>,
 }
 
 impl ChainHandler {
@@ -43,27 +45,123 @@ impl ChainHandler {
 	}
 
 	pub fn get_btc_address_status(&self, address: String) -> Result<AddressStatus, Error> {
+		// get our utxo_data
 		let wval = w(&self.utxo_data)?;
-		let val = wval.addr_map.get(&address);
-		let valid = val.is_some();
+		// obtain read lock
+		let wval = wval.read();
+		// get the btc_address if it exists
+		let val = (*wval).get_index(address.clone());
+		let valid = val.is_ok();
 		let mut unclaimed = false; // unclaimed will be false if it's not valid
 		let mut sats = 0;
 		let mut index = 0;
-		if val.is_some() {
-			let tuple = *val.unwrap();
-			sats = tuple.0;
-			index = tuple.1;
-
-			let mut bitvecs = wval.claims_bitmaps.lock().unwrap();
-			let bitvec = bitvecs.get_mut("head").unwrap();
+		if val.is_ok() {
+			// get sats for this address
+			sats = (*wval).get_sats_by_address(address).unwrap();
+			// get index
+			index = val.unwrap();
+			// check to see whether this is already claimed
+			let bitvec = wval.claims_bitmap.lock().unwrap();
 			unclaimed = !*bitvec.get(index.try_into().unwrap_or(0)).unwrap();
 		}
 
+		// return appropriate structure
 		Ok(AddressStatus {
 			valid,
 			unclaimed,
 			sats,
 			index,
+		})
+	}
+
+	pub fn scan(
+		&self,
+		client_headers: Vec<(String, u64, u64)>,
+		max_outputs: u64,
+		offset_mmr_index: u64,
+		mmr_check: Vec<u64>,
+		is_syncing: bool,
+	) -> Result<ScanResponse, Error> {
+		if is_syncing {
+			return Ok(ScanResponse {
+				is_syncing: true,
+				last_pmmr_index: 0,
+				headers: vec![],
+				outputs: vec![],
+				mmr_spent: vec![],
+			});
+		}
+
+		let chain = w(&self.chain)?;
+		let mut highest_valid_header = 0;
+
+		for header in client_headers {
+			let internal_hash = chain.get_header_hash_by_height(header.1)?.to_hex();
+			if internal_hash == header.0 {
+				// this header is valid
+				if header.1 > highest_valid_header {
+					highest_valid_header = header.1;
+				}
+			}
+		}
+
+		// get the last valid mmr index
+		let last_valid_header = chain.get_header_by_height(highest_valid_header)?;
+		let mut start_index = last_valid_header.output_mmr_size + 1;
+		if start_index < offset_mmr_index {
+			start_index = offset_mmr_index;
+		}
+
+		let outputs = chain
+			.unspent_outputs_by_pmmr_index(start_index, max_outputs, None)?
+			.2;
+
+		let outputs = {
+			let mut ret = vec![];
+			for output in outputs {
+				let commit_pos = chain.get_unspent(output.identifier.commit)?;
+				match commit_pos {
+					Some(commit_pos) => {
+						let pos = commit_pos.1.pos;
+						let height = commit_pos.1.height;
+						ret.push((pos, height, output));
+					}
+					None => {
+						return Err(ErrorKind::Internal("output not found".to_string()).into());
+					}
+				}
+			}
+
+			ret
+		};
+
+		let head = chain.head_header()?;
+		let last_pmmr_index = head.output_mmr_size;
+		let mut headers = vec![];
+		let mut height = head.height;
+		let mut count = 0;
+		loop {
+			let hash = chain.get_header_hash_by_height(height)?;
+			let output_mmr_index = chain.get_header_by_height(height)?.output_mmr_size;
+			headers.push((hash.to_hex(), height, output_mmr_index));
+
+			// maximum of 10 headers
+			if height <= 100 || count >= 10 {
+				break;
+			}
+			count += 1;
+			height -= 100;
+		}
+
+		// check spent mmrs
+		let mmr_spent = chain.get_mmr_check_list(mmr_check)?;
+
+		Ok(ScanResponse {
+			is_syncing: false,
+			last_pmmr_index,
+			headers,
+			outputs,
+			mmr_spent,
 		})
 	}
 }
@@ -458,6 +556,47 @@ impl KernelHandler {
 				mmr_index,
 			});
 		Ok(kernel)
+	}
+
+	pub fn get_all_kernels(
+		&self,
+		min_height: u64,
+		max_height: u64,
+	) -> Result<Vec<LocatedTxKernel>, Error> {
+		let chain = w(&self.chain)?;
+		let kernels = chain.get_all_kernels(min_height, max_height)?;
+		let mut located_kernels = vec![];
+		for kernel in kernels {
+			located_kernels.push(LocatedTxKernel {
+				tx_kernel: kernel.0,
+				height: kernel.1,
+				mmr_index: kernel.2,
+			});
+		}
+
+		Ok(located_kernels)
+	}
+
+	pub fn get_kernels_v2(&self, excess: Vec<String>) -> Result<Vec<u64>, Error> {
+		let excess = {
+			let mut ret = vec![];
+			for ex in excess {
+				let ex = util::from_hex(&ex)
+					.map_err(|_| ErrorKind::RequestError("invalid excess hex".into()))?;
+				if ex.len() != 33 {
+					return Err(ErrorKind::RequestError("invalid excess length".into()).into());
+				}
+
+				let ex = Commitment::from_vec(ex);
+				ret.push(ex.clone());
+			}
+			ret
+		};
+
+		let chain = w(&self.chain)?;
+		chain
+			.get_kernel_heights(excess)
+			.map_err(|e| ErrorKind::Internal(format!("{}", e)).into())
 	}
 
 	pub fn get_kernel_v2(

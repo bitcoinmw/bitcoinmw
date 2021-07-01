@@ -21,9 +21,9 @@ use ring::constant_time::verify_slices_are_equal;
 
 lazy_static! {
 	pub static ref GRIN_BASIC_REALM: HeaderValue =
-		HeaderValue::from_str("Basic realm=GrinAPI").unwrap();
+		HeaderValue::from_str("Basic realm=BmwAPI").unwrap();
 	pub static ref GRIN_FOREIGN_BASIC_REALM: HeaderValue =
-		HeaderValue::from_str("Basic realm=GrinForeignAPI").unwrap();
+		HeaderValue::from_str("Basic realm=BmwForeignAPI").unwrap();
 }
 
 // Basic Authentication Middleware

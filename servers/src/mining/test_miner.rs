@@ -128,7 +128,7 @@ impl Miner {
 
 	/// Starts the mining loop, building a new block on top of the existing
 	/// chain anytime required and looking for PoW solution.
-	pub fn run_loop(&self, wallet_listener_url: Option<String>) {
+	pub fn run_loop(&self, recipient_address: Option<String>) {
 		info!(
 			"(Server ID: {}) Starting test miner loop.",
 			self.debug_output_id
@@ -158,7 +158,7 @@ impl Miner {
 				&self.tx_pool,
 				self.verifier_cache.clone(),
 				key_id.clone(),
-				wallet_listener_url.clone(),
+				recipient_address.clone(),
 			);
 
 			let sol = self.inner_mining_loop(

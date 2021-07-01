@@ -14,38 +14,37 @@
 
 use grin_chain as chain;
 use grin_core as core;
+use grin_core::address::Address;
 use grin_keychain as keychain;
+use rand::thread_rng;
 
 mod chain_test_helper;
 
-use self::chain_test_helper::{clean_output_dir, mine_chain};
+use self::chain_test_helper::{clean_output_dir, mine_chain, new_block};
 use crate::chain::{Chain, ErrorKind, Options};
 use crate::core::{
 	consensus,
 	core::{block, Block},
 	global,
-	libtx::{reward, ProofBuilder},
+	libtx::ProofBuilder,
 	pow,
 };
-use crate::keychain::{ExtKeychain, ExtKeychainPath, Keychain};
+use crate::keychain::{ExtKeychain, Keychain};
 use chrono::Duration;
 
 fn build_block(chain: &Chain) -> Block {
 	let keychain = ExtKeychain::from_random_seed(false).unwrap();
-	let pk = ExtKeychainPath::new(1, 1, 0, 0, 0).to_identifier();
-
 	let prev = chain.head_header().unwrap();
 	let next_header_info = consensus::next_difficulty(1, chain.difficulty_iter().unwrap());
-	let reward = reward::output(
+	let (_pri_view, pub_view) = keychain.secp().generate_keypair(&mut thread_rng()).unwrap();
+	let recipient_addr = Address::from_one_pubkey(&pub_view, global::ChainTypes::AutomatedTesting);
+	let mut block = new_block(
+		&[],
 		&keychain,
 		&ProofBuilder::new(&keychain),
-		&pk,
-		0,
-		false,
-		prev.height + 1,
-	)
-	.unwrap();
-	let mut block = Block::new(&prev, &[], next_header_info.clone().difficulty, reward).unwrap();
+		&prev,
+		recipient_addr,
+	);
 
 	block.header.timestamp = prev.timestamp + Duration::seconds(60);
 	block.header.pow.secondary_scaling = next_header_info.secondary_scaling;
@@ -67,7 +66,7 @@ fn build_block(chain: &Chain) -> Block {
 
 #[test]
 fn test_header_weight_validation() {
-	let chain_dir = ".grin.header_weight";
+	let chain_dir = ".bmw.header_weight";
 	clean_output_dir(chain_dir);
 	let chain = mine_chain(chain_dir, 5);
 	assert_eq!(chain.head().unwrap().height, 4);

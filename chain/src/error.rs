@@ -19,10 +19,15 @@ use crate::core::ser;
 use crate::keychain;
 use crate::util::secp;
 use crate::util::secp::pedersen::Commitment;
+use bitvec::prelude::BitVec;
 use failure::{Backtrace, Context, Fail};
 use grin_store as store;
+use std::convert::Infallible;
 use std::fmt::{self, Display};
 use std::io;
+use std::num::TryFromIntError;
+use std::sync::MutexGuard;
+use std::sync::PoisonError;
 
 /// Error definition
 #[derive(Debug, Fail)]
@@ -45,6 +50,18 @@ pub enum ErrorKind {
 	/// Addition of difficulties on all previous block is wrong
 	#[fail(display = "Addition of difficulties on all previous blocks is wrong")]
 	WrongTotalDifficulty,
+	/// Invalid BTC Claim
+	#[fail(display = "BTC claim was invalid")]
+	InvalidBTCClaim,
+	/// Too many keys sent for this redeem script
+	#[fail(display = "Too many keys sent for this redeem script")]
+	TooManyKeys,
+	/// BTC Signature invalid
+	#[fail(display = "BTC Signature was invalid")]
+	BTCSignatureInvalid,
+	/// BTC Address invalid
+	#[fail(display = "BTC Address was invalid")]
+	BTCAddressInvalid,
 	/// Block header edge_bits is lower than our min
 	#[fail(display = "Cuckoo Size too small")]
 	LowEdgebits,
@@ -165,9 +182,27 @@ pub enum ErrorKind {
 	/// Segment height not within allowed range
 	#[fail(display = "Invalid segment height")]
 	InvalidSegmentHeight,
+	/// Index out of bounds
+	#[fail(display = "Claim Index out of bounds: {}", _0)]
+	ClaimIndexOutOfBounds(usize),
 	/// BTC Signature was invalid
 	#[fail(display = "Invalid BTC Signature")]
 	InvalidBTCSignature,
+	/// For BTC Multisig
+	#[fail(display = "Signature not found for this condition")]
+	NoSignature,
+	/// NoneError for dealing with 'upgrade' fn
+	#[fail(display = "Upgrade failed. None Error.")]
+	NoneError,
+	/// PoisonError for dealing with bitvec mutex
+	#[fail(display = "PoisonError: {}", _0)]
+	PoisonError(String),
+	/// Infallible error
+	#[fail(display = "Infallible: {}", _0)]
+	Infallible(String),
+	/// TryFromIntError error
+	#[fail(display = "TryFromIntError: {}", _0)]
+	TryFromIntError(String),
 }
 
 impl Display for Error {
@@ -304,6 +339,30 @@ impl From<secp::Error> for Error {
 	fn from(e: secp::Error) -> Error {
 		Error {
 			inner: Context::new(ErrorKind::Secp(e)),
+		}
+	}
+}
+
+impl From<PoisonError<MutexGuard<'_, BitVec>>> for Error {
+	fn from(e: PoisonError<MutexGuard<'_, BitVec>>) -> Error {
+		Error {
+			inner: Context::new(ErrorKind::PoisonError(e.to_string())),
+		}
+	}
+}
+
+impl From<Infallible> for Error {
+	fn from(e: Infallible) -> Error {
+		Error {
+			inner: Context::new(ErrorKind::Infallible(e.to_string())),
+		}
+	}
+}
+
+impl From<TryFromIntError> for Error {
+	fn from(e: TryFromIntError) -> Error {
+		Error {
+			inner: Context::new(ErrorKind::TryFromIntError(e.to_string())),
 		}
 	}
 }

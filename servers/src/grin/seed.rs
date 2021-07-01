@@ -21,7 +21,6 @@ use chrono::prelude::{DateTime, Utc};
 use chrono::{Duration, MIN_DATE};
 use rand::prelude::*;
 use std::collections::HashMap;
-use std::net::ToSocketAddrs;
 use std::sync::{mpsc, Arc};
 use std::{cmp, str, thread, time};
 
@@ -42,10 +41,13 @@ const MAINNET_DNS_SEEDS: &[&str] = &[
 	"mainnet-seed.grinnode.live",      // info@grinnode.live
 ];
 const TESTNET_DNS_SEEDS: &[&str] = &[
-	"floonet.seed.grin.icu",           // gary.peverell@protonmail.com
-	"floonet.seed.713.mw",             // jasper@713.mw
-	"floonet.seed.grin.lesceller.com", // q.lesceller@gmail.com
-	"floonet.seed.grin.prokapi.com",   // hendi@prokapi.com
+	"xbazmkys3nfxc23h3e2hu4movqkhenzdxx3emrkaxjia23brmlj5t5ad.onion",
+	"py3zj5wdd6t56evziqyas4ioicpwxs2lrec7jem3zmitbviecdppcjyd.onion",
+	"wo3w6idcnlyj7ojq6y6mtcadivq7axnlc3e6m2lzt53zpf5sfwakrvyd.onion",
+	"6m7kuumb7prs64ktspx5stfj4g6vwtriob42vefsldsgjz6ciqg22vyd.onion",
+	"hkuajdk2bor2cyyfmvazaaijf5o5jnedbwvijn46z5jqxjbz544zt5id.onion",
+	"voh3qzcmbasx6o7vtsmpjo6v77m3qyj76n3arpxx2n6ygrp76ys5hwqd.onion",
+	"rjmyxfmbevz43rdaqskrfkfhxduqfcaifwnqaezbe7ubkxz3aj6kqoqd.onion",
 ];
 
 pub fn connect_and_monitor(
@@ -156,7 +158,7 @@ fn monitor_peers(
 				let interval = Utc::now().timestamp() - x.last_banned;
 				// Unban peer
 				if interval >= config.ban_window() {
-					if let Err(e) = peers.unban_peer(x.addr) {
+					if let Err(e) = peers.unban_peer(x.addr.clone()) {
 						error!("failed to unban peer {}: {:?}", x.addr, e);
 					}
 					debug!(
@@ -214,20 +216,20 @@ fn monitor_peers(
 			"monitor_peers: {}:{} ask {} for more peers",
 			config.host,
 			config.port,
-			p.info.addr,
+			p.info.addr.clone(),
 		);
 		let _ = p.send_peer_request(p2p::Capabilities::PEER_LIST);
-		connected_peers.push(p.info.addr)
+		connected_peers.push(p.info.addr.clone())
 	}
 
 	// Attempt to connect to any preferred peers.
 	for p in preferred_peers {
 		if !connected_peers.is_empty() {
 			if !connected_peers.contains(p) {
-				tx.send(*p).unwrap();
+				tx.send((*p).clone()).unwrap();
 			}
 		} else {
-			tx.send(*p).unwrap();
+			tx.send((*p).clone()).unwrap();
 		}
 	}
 
@@ -253,7 +255,7 @@ fn monitor_peers(
 	// The call to is_known() may fail due to contention on the peers map.
 	// Do not attempt any connection where is_known() fails for any reason.
 	for p in new_peers {
-		if let Ok(false) = peers.is_known(p.addr) {
+		if let Ok(false) = peers.is_known(p.addr.clone()) {
 			tx.send(p.addr).unwrap();
 		}
 	}
@@ -270,10 +272,9 @@ fn connect_to_seeds_and_preferred_peers(
 	// check if we have some peers in db
 	// look for peers that are able to give us other peers (via PEER_LIST capability)
 	let peers = peers.find_peers(p2p::State::Healthy, p2p::Capabilities::PEER_LIST, 100);
-
 	// if so, get their addresses, otherwise use our seeds
 	let mut peer_addrs = if peers.len() > 3 {
-		peers.iter().map(|p| p.addr).collect::<Vec<_>>()
+		peers.iter().map(|p| p.addr.clone()).collect::<Vec<_>>()
 	} else {
 		seed_list()
 	};
@@ -330,13 +331,13 @@ fn listen_for_addrs(
 				*history = now;
 			}
 		}
-		connecting_history.insert(addr, now);
+		connecting_history.insert(addr.clone(), now);
 
 		let peers_c = peers.clone();
 		let p2p_c = p2p.clone();
 		thread::Builder::new()
 			.name("peer_connect".to_string())
-			.spawn(move || match p2p_c.connect(addr) {
+			.spawn(move || match p2p_c.connect(addr.clone()) {
 				Ok(p) => {
 					// If peer advertizes PEER_LIST then ask it for more peers that support PEER_LIST.
 					// We want to build a local db of possible peers to connect to.
@@ -344,10 +345,10 @@ fn listen_for_addrs(
 					if p.info.capabilities.contains(p2p::Capabilities::PEER_LIST) {
 						let _ = p.send_peer_request(p2p::Capabilities::PEER_LIST);
 					}
-					let _ = peers_c.update_state(addr, p2p::State::Healthy);
+					let _ = peers_c.update_state(addr.clone(), p2p::State::Healthy);
 				}
 				Err(_) => {
-					let _ = peers_c.update_state(addr, p2p::State::Defunct);
+					let _ = peers_c.update_state(addr.clone(), p2p::State::Defunct);
 				}
 			})
 			.expect("failed to launch peer_connect thread");
@@ -360,7 +361,7 @@ fn listen_for_addrs(
 		let old: Vec<_> = connecting_history
 			.iter()
 			.filter(|&(_, t)| *t + Duration::seconds(connect_min_interval) < now)
-			.map(|(s, _)| *s)
+			.map(|(s, _)| (*s).clone())
 			.collect();
 		for addr in old {
 			connecting_history.remove(&addr);
@@ -375,35 +376,14 @@ pub fn default_dns_seeds() -> Box<dyn Fn() -> Vec<PeerAddr> + Send> {
 		} else {
 			MAINNET_DNS_SEEDS
 		};
-		resolve_dns_to_addrs(
-			&net_seeds
-				.iter()
-				.map(|s| {
-					s.to_string()
-						+ if global::is_testnet() {
-							":13414"
-						} else {
-							":3414"
-						}
-				})
-				.collect(),
-		)
+		resolve_dns_to_addrs(&net_seeds.iter().map(|s| s.to_string()).collect())
 	})
 }
 
 fn resolve_dns_to_addrs(dns_records: &Vec<String>) -> Vec<PeerAddr> {
 	let mut addresses: Vec<PeerAddr> = vec![];
-	for dns in dns_records {
-		debug!("Retrieving addresses from dns {}", dns);
-		match dns.to_socket_addrs() {
-			Ok(addrs) => addresses.append(
-				&mut addrs
-					.map(PeerAddr)
-					.filter(|addr| !addresses.contains(addr))
-					.collect(),
-			),
-			Err(e) => debug!("Failed to resolve dns {:?} got error {:?}", dns, e),
-		};
+	for record in dns_records {
+		addresses.push(PeerAddr::Onion(record.to_string()));
 	}
 	debug!("Resolved addresses: {:?}", addresses);
 	addresses

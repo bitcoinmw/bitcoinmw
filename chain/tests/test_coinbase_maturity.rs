@@ -12,20 +12,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+mod chain_test_helper;
+
 use self::chain::types::NoopAdapter;
 use self::chain::ErrorKind;
+use self::chain_test_helper::new_block;
+use self::core::address::Address;
 use self::core::core::verifier_cache::LruVerifierCache;
 use self::core::core::KernelFeatures;
 use self::core::global::{self, ChainTypes};
-use self::core::libtx::{self, build, ProofBuilder};
+use self::core::libtx::{build, ProofBuilder};
 use self::core::{consensus, pow};
-use self::keychain::{ExtKeychain, ExtKeychainPath, Keychain};
 use self::util::RwLock;
 use chrono::Duration;
 use grin_chain as chain;
 use grin_core as core;
-use grin_keychain as keychain;
+use grin_keychain::{ExtKeychain, Keychain};
 use grin_util as util;
+use rand::thread_rng;
 use std::fs;
 use std::sync::Arc;
 
@@ -36,9 +40,14 @@ fn clean_output_dir(dir_name: &str) {
 #[test]
 fn test_coinbase_maturity() {
 	util::init_test_logger();
-	let chain_dir = ".grin_coinbase";
+	let chain_dir = ".bmw_coinbase";
 	clean_output_dir(chain_dir);
 	global::set_local_chain_type(ChainTypes::AutomatedTesting);
+
+	let keychain = ExtKeychain::from_random_seed(false).unwrap();
+	let builder = ProofBuilder::new(&keychain);
+	let (pri_view, pub_view) = keychain.secp().generate_keypair(&mut thread_rng()).unwrap();
+	let recipient_addr = Address::from_one_pubkey(&pub_view, global::ChainTypes::AutomatedTesting);
 
 	let genesis_block = pow::mine_genesis_block().unwrap();
 
@@ -58,20 +67,15 @@ fn test_coinbase_maturity() {
 
 		let prev = chain.head_header().unwrap();
 
-		let keychain = ExtKeychain::from_random_seed(false).unwrap();
-		let builder = ProofBuilder::new(&keychain);
-		let key_id1 = ExtKeychainPath::new(1, 1, 0, 0, 0).to_identifier();
-		let key_id2 = ExtKeychainPath::new(1, 2, 0, 0, 0).to_identifier();
-		let key_id3 = ExtKeychainPath::new(1, 3, 0, 0, 0).to_identifier();
-		let key_id4 = ExtKeychainPath::new(1, 4, 0, 0, 0).to_identifier();
-
 		let next_header_info =
 			consensus::next_difficulty(prev.height + 1, chain.difficulty_iter().unwrap());
-		let reward =
-			libtx::reward::output(&keychain, &builder, &key_id1, 0, false, prev.height + 1)
-				.unwrap();
-		let mut block =
-			core::core::Block::new(&prev, &[], next_header_info.difficulty, reward).unwrap();
+		let mut block = new_block(
+			&[],
+			&keychain,
+			&ProofBuilder::new(&keychain),
+			&prev,
+			recipient_addr.clone(),
+		);
 		block.header.timestamp = prev.timestamp + Duration::seconds(60);
 		block.header.pow.secondary_scaling = next_header_info.secondary_scaling;
 
@@ -102,11 +106,12 @@ fn test_coinbase_maturity() {
 
 		// here we build a tx that attempts to spend the earlier coinbase output
 		// this is not a valid tx as the coinbase output cannot be spent yet
+		let index: u64 = chain.get_output_pos(&coinbase_output.commitment()).unwrap() - 1;
 		let coinbase_txn = build::transaction(
 			KernelFeatures::Plain { fee: 2.into() },
 			&[
-				build::coinbase_input(amount, key_id1.clone()),
-				build::output(amount - 2, key_id2.clone()),
+				build::input(amount, pri_view.clone(), coinbase_output, index),
+				build::output_rand(amount - 2),
 			],
 			&keychain,
 			&builder,
@@ -114,14 +119,15 @@ fn test_coinbase_maturity() {
 		.unwrap();
 
 		let txs = &[coinbase_txn.clone()];
-		let fees = txs.iter().map(|tx| tx.fee(prev.height + 1)).sum();
-		let reward =
-			libtx::reward::output(&keychain, &builder, &key_id3, fees, false, prev.height + 1)
-				.unwrap();
 		let next_header_info =
 			consensus::next_difficulty(prev.height + 1, chain.difficulty_iter().unwrap());
-		let mut block =
-			core::core::Block::new(&prev, txs, next_header_info.difficulty, reward).unwrap();
+		let mut block = new_block(
+			txs,
+			&keychain,
+			&ProofBuilder::new(&keychain),
+			&prev,
+			recipient_addr.clone(),
+		);
 		block.header.timestamp = prev.timestamp + Duration::seconds(60);
 		block.header.pow.secondary_scaling = next_header_info.secondary_scaling;
 
@@ -152,15 +158,16 @@ fn test_coinbase_maturity() {
 
 			let keychain = ExtKeychain::from_random_seed(false).unwrap();
 			let builder = ProofBuilder::new(&keychain);
-			let key_id1 = ExtKeychainPath::new(1, 1, 0, 0, 0).to_identifier();
 
 			let next_header_info =
 				consensus::next_difficulty(prev.height + 1, chain.difficulty_iter().unwrap());
-			let reward =
-				libtx::reward::output(&keychain, &builder, &key_id1, 0, false, prev.height + 1)
-					.unwrap();
-			let mut block =
-				core::core::Block::new(&prev, &[], next_header_info.difficulty, reward).unwrap();
+			let mut block = new_block(
+				&[],
+				&keychain,
+				&ProofBuilder::new(&keychain),
+				&prev,
+				recipient_addr.clone(),
+			);
 
 			block.header.timestamp = prev.timestamp + Duration::seconds(60);
 			block.header.pow.secondary_scaling = next_header_info.secondary_scaling;
@@ -192,11 +199,12 @@ fn test_coinbase_maturity() {
 
 			// here we build a tx that attempts to spend the earlier coinbase output
 			// this is not a valid tx as the coinbase output cannot be spent yet
+			let index: u64 = chain.get_output_pos(&coinbase_output.commitment()).unwrap() - 1;
 			let coinbase_txn = build::transaction(
 				KernelFeatures::Plain { fee: 2.into() },
 				&[
-					build::coinbase_input(amount, key_id1.clone()),
-					build::output(amount - 2, key_id2.clone()),
+					build::input(amount, pri_view.clone(), coinbase_output, index),
+					build::output_rand(amount - 2),
 				],
 				&keychain,
 				&builder,
@@ -204,14 +212,15 @@ fn test_coinbase_maturity() {
 			.unwrap();
 
 			let txs = &[coinbase_txn.clone()];
-			let fees = txs.iter().map(|tx| tx.fee(prev.height + 1)).sum();
-			let reward =
-				libtx::reward::output(&keychain, &builder, &key_id3, fees, false, prev.height + 1)
-					.unwrap();
 			let next_header_info =
 				consensus::next_difficulty(prev.height + 1, chain.difficulty_iter().unwrap());
-			let mut block =
-				core::core::Block::new(&prev, txs, next_header_info.difficulty, reward).unwrap();
+			let mut block = new_block(
+				txs,
+				&keychain,
+				&ProofBuilder::new(&keychain),
+				&prev,
+				recipient_addr.clone(),
+			);
 			block.header.timestamp = prev.timestamp + Duration::seconds(60);
 			block.header.pow.secondary_scaling = next_header_info.secondary_scaling;
 
@@ -241,17 +250,16 @@ fn test_coinbase_maturity() {
 				let prev = chain.head_header().unwrap();
 
 				let keychain = ExtKeychain::from_random_seed(false).unwrap();
-				let builder = ProofBuilder::new(&keychain);
-				let pk = ExtKeychainPath::new(1, 1, 0, 0, 0).to_identifier();
 
-				let reward =
-					libtx::reward::output(&keychain, &builder, &pk, 0, false, prev.height + 1)
-						.unwrap();
 				let next_header_info =
 					consensus::next_difficulty(prev.height + 1, chain.difficulty_iter().unwrap());
-				let mut block =
-					core::core::Block::new(&prev, &[], next_header_info.difficulty, reward)
-						.unwrap();
+				let mut block = new_block(
+					&[],
+					&keychain,
+					&ProofBuilder::new(&keychain),
+					&prev,
+					recipient_addr.clone(),
+				);
 				block.header.timestamp = prev.timestamp + Duration::seconds(60);
 				block.header.pow.secondary_scaling = next_header_info.secondary_scaling;
 
@@ -277,14 +285,15 @@ fn test_coinbase_maturity() {
 				.unwrap();
 
 			let txs = &[coinbase_txn];
-			let fees = txs.iter().map(|tx| tx.fee(prev.height + 1)).sum();
 			let next_header_info =
 				consensus::next_difficulty(prev.height + 1, chain.difficulty_iter().unwrap());
-			let reward =
-				libtx::reward::output(&keychain, &builder, &key_id4, fees, false, prev.height + 1)
-					.unwrap();
-			let mut block =
-				core::core::Block::new(&prev, txs, next_header_info.difficulty, reward).unwrap();
+			let mut block = new_block(
+				txs,
+				&keychain,
+				&ProofBuilder::new(&keychain),
+				&prev,
+				recipient_addr.clone(),
+			);
 
 			block.header.timestamp = prev.timestamp + Duration::seconds(60);
 			block.header.pow.secondary_scaling = next_header_info.secondary_scaling;

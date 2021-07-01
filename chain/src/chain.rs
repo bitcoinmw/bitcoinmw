@@ -37,13 +37,7 @@ use crate::util::secp::pedersen::{Commitment, RangeProof};
 use crate::util::RwLock;
 use crate::ChainStore;
 
-use bitcoin::secp256k1::{Message, Secp256k1};
-use bitcoin::util::key::PublicKey as BitcoinPublicKey;
-use bitcoin::util::misc;
-use bitcoin::Address;
-
-use bitcoinmw_loader::loader::UtxoData;
-use grin_core::core::get_recoverable_signature;
+use bmw_utxo::utxo_data::UtxoData;
 use grin_core::ser;
 use grin_store::Error::NotFoundErr;
 use std::convert::TryInto;
@@ -168,7 +162,7 @@ pub struct Chain {
 	pow_verifier: fn(&BlockHeader) -> Result<(), pow::Error>,
 	archive_mode: bool,
 	genesis: BlockHeader,
-	utxo_data: Option<Weak<UtxoData>>,
+	utxo_data: Option<Weak<RwLock<UtxoData>>>,
 }
 
 impl Chain {
@@ -182,7 +176,7 @@ impl Chain {
 		pow_verifier: fn(&BlockHeader) -> Result<(), pow::Error>,
 		verifier_cache: Arc<RwLock<dyn VerifierCache>>,
 		archive_mode: bool,
-		utxo_data: Option<Weak<UtxoData>>,
+		utxo_data: Option<Weak<RwLock<UtxoData>>>,
 	) -> Result<Chain, Error> {
 		let store = Arc::new(store::ChainStore::new(&db_root)?);
 
@@ -212,6 +206,8 @@ impl Chain {
 			&mut header_pmmr,
 			&mut sync_pmmr,
 			&mut txhashset,
+			utxo_data.clone(),
+			verifier_cache.clone(),
 		)?;
 
 		// Initialize the output_pos index based on UTXO set
@@ -236,7 +232,7 @@ impl Chain {
 			verifier_cache,
 			archive_mode,
 			genesis: genesis.header,
-			utxo_data,
+			utxo_data: utxo_data.clone(),
 		};
 
 		chain.init_utxo_data()?;
@@ -276,34 +272,53 @@ impl Chain {
 		self.store.clone()
 	}
 
+	/// Initialize the utxo_data by iterating through the kernels
+	/// Any kernel with this KernelFeature is set in the bitvec to
+	/// true indicating that it is claimed.
+
 	fn init_utxo_data(&self) -> Result<(), Error> {
+		// get a reference to the utxo_data
 		if self.utxo_data.is_none() {
+			// return if it's none (for tests)
 			return Ok(());
 		}
-		let utxo_data = self.utxo_data.as_ref().unwrap();
-		let utxo_data = utxo_data.upgrade().unwrap();
 
-		// we use a mutex because there are two threads that can access this and we write
-		let mut bitvecs = utxo_data.claims_bitmaps.lock().unwrap();
+		let utxo_data = self
+			.utxo_data
+			.as_ref()
+			.ok_or(Error::from(ErrorKind::NoneError))?
+			.upgrade()
+			.ok_or(Error::from(ErrorKind::NoneError))?;
 
-		let bitvec = bitvecs.get_mut("head").unwrap();
+		let utxo_data = utxo_data.write();
+
+		// get the bitvec and lock the mutex
+		let mut bitvec = utxo_data.claims_bitmap.lock()?;
 
 		let txhashset = self.txhashset.read();
 
+		// iterate through each kernel
 		txhashset::rewindable_kernel_view(&txhashset, |view, _| {
 			let mut index = 0;
 			loop {
 				let (next, kernels) = view
 					.readonly_pmmr()
 					.elements_from_pmmr_index(index, 100, None);
-				index = next;
-				if kernels.len() == 0 {
+				let len = kernels.len();
+				if len == 0 || len == 1 && index != 0 {
 					break;
 				}
+				index = next;
 				for kernel in kernels.clone() {
+					// if there kernel has a BTCClaim feature, check it and update bitvec
 					match kernel.features {
-						KernelFeatures::BitcoinInit { index, .. } => {
-							bitvec.insert(index.try_into().unwrap_or(0), true);
+						KernelFeatures::BTCClaim { index, .. } => {
+							let index: usize = index.try_into()?;
+							if index >= bitvec.len() {
+								return Err(ErrorKind::ClaimIndexOutOfBounds(index).into());
+							}
+							// set appropriate bit in the bitvec
+							bitvec.set(index, true);
 						}
 						_ => {}
 					}
@@ -311,7 +326,6 @@ impl Chain {
 			}
 			Ok(())
 		})?;
-
 		Ok(())
 	}
 
@@ -357,22 +371,36 @@ impl Chain {
 		if block.inputs().is_empty() {
 			return Ok(Block {
 				header: block.header,
-				body: block.body.replace_inputs(Inputs::FeaturesAndCommit(vec![])),
+				body: block.body.replace_inputs(Inputs(vec![])),
 			});
 		}
 
+		let sig_map = block.inputs().build_map()?;
+
 		let mut header_pmmr = self.header_pmmr.write();
 		let mut txhashset = self.txhashset.write();
-		let inputs: Vec<_> =
-			txhashset::extending_readonly(&mut header_pmmr, &mut txhashset, |ext, batch| {
+		let inputs: Vec<_> = txhashset::extending_readonly(
+			&mut header_pmmr,
+			&mut txhashset,
+			self.utxo_data.clone(),
+			|ext, batch| {
 				let previous_header = batch.get_previous_header(&block.header)?;
-				pipe::rewind_and_apply_fork(&previous_header, ext, batch)?;
+				pipe::rewind_and_apply_fork(
+					&previous_header,
+					ext,
+					self.verifier_cache.clone(),
+					batch,
+					self.utxo_data.clone(),
+				)?;
 				ext.extension
 					.utxo_view(ext.header_extension)
 					.validate_inputs(&block.inputs(), batch)
 					.map(|outputs| outputs.into_iter().map(|(out, _)| out).collect())
-			})?;
-		let inputs = inputs.as_slice().into();
+			},
+		)?;
+
+		let inputs = Inputs::from_output_identifiers(&inputs, sig_map)?;
+
 		Ok(Block {
 			header: block.header,
 			body: block.body.replace_inputs(inputs),
@@ -482,7 +510,7 @@ impl Chain {
 			let prev_head = batch.head()?;
 			let mut ctx = self.new_ctx(opts, batch, &mut header_pmmr, &mut txhashset)?;
 
-			let maybe_new_head = pipe::process_block(&b, &mut ctx, self.utxo_data.as_ref());
+			let maybe_new_head = pipe::process_block(&b, &mut ctx, self.utxo_data.clone());
 
 			// We have flushed txhashset extension changes to disk
 			// but not yet committed the batch.
@@ -676,6 +704,19 @@ impl Chain {
 		})
 	}
 
+	/// Return a list of mmr indicies that have been spent based on the input list
+	/// if an mmr input is not found, it's returned as spent
+	pub fn get_mmr_check_list(&self, list: Vec<u64>) -> Result<Vec<u64>, Error> {
+		let header_pmmr = self.header_pmmr.read();
+		let txhashset = self.txhashset.read();
+
+		let ret = txhashset::utxo_view(&header_pmmr, &txhashset, |utxo, _| {
+			utxo.get_mmr_check_list(list)
+		})?;
+
+		Ok(ret)
+	}
+
 	/// Validate the tx against the current UTXO set and recent kernels (NRD relative lock heights).
 	pub fn validate_tx(&self, tx: &Transaction) -> Result<(), Error> {
 		self.validate_tx_against_btc_utxo(tx)?;
@@ -685,6 +726,7 @@ impl Chain {
 	}
 
 	/// Validates NRD relative height locks against "recent" kernel history.
+	/// Also validates BTCCLaim kernels
 	/// Applies the kernels to the current kernel MMR in a readonly extension.
 	/// The extension and the db batch are discarded.
 	/// The batch ensures duplicate NRD kernels within the tx are handled correctly.
@@ -700,56 +742,31 @@ impl Chain {
 		}
 		let mut header_pmmr = self.header_pmmr.write();
 		let mut txhashset = self.txhashset.write();
-		txhashset::extending_readonly(&mut header_pmmr, &mut txhashset, |ext, batch| {
-			let height = self.next_block_height()?;
-			ext.extension.apply_kernels(tx.kernels(), height, batch)
-		})
+		txhashset::extending_readonly(
+			&mut header_pmmr,
+			&mut txhashset,
+			self.utxo_data.clone(),
+			|ext, batch| {
+				let height = self.next_block_height()?;
+				ext.extension.apply_kernels(tx.kernels(), height, batch)
+			},
+		)
 	}
 
 	/// Validate the BTC signatures in the kernels in this TX.
 	fn validate_btc_kernels(&self, kernels: &[TxKernel]) -> Result<(), Error> {
+		// get a reference to the utxo_data
 		if self.utxo_data.is_none() {
 			return Ok(());
 		}
-		let utxo_data = self.utxo_data.as_ref().unwrap();
-		let utxo_data = utxo_data.upgrade().unwrap();
+		let utxo_data = self.get_utxo_struct()?;
 
-		let secp = Secp256k1::verification_only();
-
+		// check each kernel in the BTCClaim
 		for k in kernels {
-			match k.features {
-				KernelFeatures::BitcoinInit {
-					btc_recovery_bit,
-					index,
-					..
-				} => {
-					let rec_sig = get_recoverable_signature(k.features.clone())
-						.map_err(|_| ErrorKind::InvalidBTCSignature)?;
-
-					let excess = format!("{:?}", k.excess);
-					let excess = excess.replace("Commitment(", "");
-					let excess = excess.replace(")", "");
-					let challenge_str = format!("bmw{}", excess);
-					let hash = misc::signed_msg_hash(&challenge_str);
-					let msg = Message::from_slice(&hash[..]).unwrap();
-					let pubkey = BitcoinPublicKey {
-						key: secp
-							.recover(&msg, &rec_sig)
-							.map_err(|_| ErrorKind::InvalidBTCSignature)?,
-						compressed: ((btc_recovery_bit - 27) & 4) != 0,
-					};
-					let address_rec =
-						Address::p2pkh(&pubkey, bitcoin::network::constants::Network::Bitcoin);
-					let address_rec = &format!("{}", address_rec);
-					let address = utxo_data.map.get(&index);
-					if !address.is_some() {
-						return Err(ErrorKind::InvalidBTCSignature.into());
-					}
-					let address = address.unwrap();
-					let address = &(&*address).address;
-					if address != address_rec {
-						return Err(ErrorKind::InvalidBTCSignature.into());
-					}
+			match &k.features {
+				// if it's a BTCClaim, we check
+				KernelFeatures::BTCClaim { .. } => {
+					k.validate_btcclaim(Some(Arc::downgrade(&utxo_data)))?;
 				}
 				_ => {}
 			}
@@ -758,25 +775,45 @@ impl Chain {
 		Ok(())
 	}
 
+	/// Get an instance of the UtxoData object which is stored behind
+	/// a weak reference
+	fn get_utxo_struct(&self) -> Result<Arc<RwLock<UtxoData>>, Error> {
+		Ok(self
+			.utxo_data
+			.as_ref()
+			.ok_or(Error::from(ErrorKind::NoneError))?
+			.upgrade()
+			.ok_or(Error::from(ErrorKind::NoneError))?)
+	}
+
+	/// Validate all kernels in this transaction that are BTCClaims. Return an
+	/// Error if anything is wrong.
 	fn validate_tx_against_btc_utxo(&self, tx: &Transaction) -> Result<(), Error> {
+		// If there is no utxo_data, that means we are in a test. Return Ok.
+		// UtxoData is always present when running as the full server.
 		if self.utxo_data.is_none() {
 			return Ok(());
 		}
-		let utxo_data = self.utxo_data.as_ref().unwrap();
-		let utxo_data = utxo_data.upgrade().unwrap();
+		// get a usable utxo_data structure
+		let utxo_data = self.get_utxo_struct()?;
+		let utxo_data = utxo_data.write();
+		// get the bitvec and lock
+		let bitvec = utxo_data.claims_bitmap.lock()?;
 
-		// we use a mutex because there are two threads that can access this and we write
-		let mut bitvecs = utxo_data.claims_bitmaps.lock().unwrap();
-
-		let bitvec = bitvecs.get_mut("head").unwrap();
-
+		// iterate through each tx kernel. Find BTCClaims.
 		for kernel in tx.kernels() {
 			match kernel.features {
-				KernelFeatures::BitcoinInit { index, .. } => {
-					if *bitvec.get(index.try_into().unwrap_or(0)).unwrap() {
+				KernelFeatures::BTCClaim { index, .. } => {
+					let index: usize = index.try_into()?;
+					// check if index is out of the range for our bitvec
+					if index >= bitvec.len() {
+						return Err(ErrorKind::ClaimIndexOutOfBounds(index).into());
+					}
+					// if it's found, that means it's already claimed.
+					if (*bitvec)[index] {
 						return Err(ErrorKind::BTCAddressAlreadyClaimed(format!(
 							"{:?}",
-							utxo_data.map.get(&index)
+							utxo_data.get_address(index.try_into()?)
 						))
 						.into());
 					}
@@ -794,7 +831,7 @@ impl Chain {
 		let header_pmmr = self.header_pmmr.read();
 		let txhashset = self.txhashset.read();
 		txhashset::utxo_view(&header_pmmr, &txhashset, |utxo, batch| {
-			utxo.validate_tx(tx, batch)
+			utxo.validate_tx(tx, self.verifier_cache.clone(), batch)
 		})
 	}
 
@@ -856,12 +893,23 @@ impl Chain {
 		// Now create an extension from the txhashset and validate against the
 		// latest block header. Rewind the extension to the specified header to
 		// ensure the view is consistent.
-		txhashset::extending_readonly(&mut header_pmmr, &mut txhashset, |ext, batch| {
-			pipe::rewind_and_apply_fork(&header, ext, batch)?;
-			ext.extension
-				.validate(fast_validation, &NoStatus, &header)?;
-			Ok(())
-		})
+		txhashset::extending_readonly(
+			&mut header_pmmr,
+			&mut txhashset,
+			self.utxo_data.clone(),
+			|ext, batch| {
+				pipe::rewind_and_apply_fork(
+					&header,
+					ext,
+					self.verifier_cache.clone(),
+					batch,
+					self.utxo_data.clone(),
+				)?;
+				ext.extension
+					.validate(fast_validation, &NoStatus, &header)?;
+				Ok(())
+			},
+		)
 	}
 
 	/// Sets prev_root on a brand new block header by applying the previous header to the header MMR.
@@ -886,14 +934,23 @@ impl Chain {
 		let mut header_pmmr = self.header_pmmr.write();
 		let mut txhashset = self.txhashset.write();
 
-		let (prev_root, roots, sizes) =
-			txhashset::extending_readonly(&mut header_pmmr, &mut txhashset, |ext, batch| {
+		let (prev_root, roots, sizes) = txhashset::extending_readonly(
+			&mut header_pmmr,
+			&mut txhashset,
+			self.utxo_data.clone(),
+			|ext, batch| {
 				// We add this condition. It's needed for gen_gen,
 				// doesn't appear needed if height == 0. Can check though and remove if
 				// it has ill effect.
 				if b.header.height > 0 {
 					let previous_header = batch.get_previous_header(&b.header)?;
-					pipe::rewind_and_apply_fork(&previous_header, ext, batch)?;
+					pipe::rewind_and_apply_fork(
+						&previous_header,
+						ext,
+						self.verifier_cache.clone(),
+						batch,
+						self.utxo_data.clone(),
+					)?;
 				}
 
 				let extension = &mut ext.extension;
@@ -906,7 +963,8 @@ impl Chain {
 				extension.apply_block(b, header_extension, batch)?;
 
 				Ok((prev_root, extension.roots()?, extension.sizes()))
-			})?;
+			},
+		)?;
 
 		// Set the output and kernel MMR sizes.
 		// Note: We need to do this *before* calculating the roots as the output_root
@@ -937,11 +995,21 @@ impl Chain {
 	) -> Result<MerkleProof, Error> {
 		let mut header_pmmr = self.header_pmmr.write();
 		let mut txhashset = self.txhashset.write();
-		let merkle_proof =
-			txhashset::extending_readonly(&mut header_pmmr, &mut txhashset, |ext, batch| {
-				pipe::rewind_and_apply_fork(&header, ext, batch)?;
+		let merkle_proof = txhashset::extending_readonly(
+			&mut header_pmmr,
+			&mut txhashset,
+			self.utxo_data.clone(),
+			|ext, batch| {
+				pipe::rewind_and_apply_fork(
+					&header,
+					ext,
+					self.verifier_cache.clone(),
+					batch,
+					self.utxo_data.clone(),
+				)?;
 				ext.extension.merkle_proof(out_id, batch)
-			})?;
+			},
+		)?;
 
 		Ok(merkle_proof)
 	}
@@ -966,14 +1034,25 @@ impl Chain {
 
 		let mut header_pmmr = self.header_pmmr.write();
 		let mut txhashset = self.txhashset.write();
-		txhashset::extending_readonly(&mut header_pmmr, &mut txhashset, |ext, batch| {
-			pipe::rewind_and_apply_fork(&header, ext, batch)?;
-			ext.extension.snapshot(batch)?;
+		txhashset::extending_readonly(
+			&mut header_pmmr,
+			&mut txhashset,
+			self.utxo_data.clone(),
+			|ext, batch| {
+				pipe::rewind_and_apply_fork(
+					&header,
+					ext,
+					self.verifier_cache.clone(),
+					batch,
+					self.utxo_data.clone(),
+				)?;
+				ext.extension.snapshot(batch)?;
 
-			// prepare the zip
-			txhashset::zip_read(self.db_root.clone(), &header)
-				.map(|file| (header.output_mmr_size, header.kernel_mmr_size, file))
-		})
+				// prepare the zip
+				txhashset::zip_read(self.db_root.clone(), &header)
+					.map(|file| (header.output_mmr_size, header.kernel_mmr_size, file))
+			},
+		)
 	}
 
 	/// The segmenter is responsible for generation PIBD segments.
@@ -1019,11 +1098,15 @@ impl Chain {
 		let mut header_pmmr = self.header_pmmr.write();
 		let mut txhashset = self.txhashset.write();
 
-		let bitmap_snapshot =
-			txhashset::extending_readonly(&mut header_pmmr, &mut txhashset, |ext, batch| {
+		let bitmap_snapshot = txhashset::extending_readonly(
+			&mut header_pmmr,
+			&mut txhashset,
+			self.utxo_data.clone(),
+			|ext, batch| {
 				ext.extension.rewind(header, batch)?;
 				Ok(ext.extension.bitmap_accumulator())
-			})?;
+			},
+		)?;
 
 		debug!("init_segmenter: done, took {}ms", now.elapsed().as_millis());
 
@@ -1204,8 +1287,8 @@ impl Chain {
 	}
 
 	/// Specific tmp dir.
-	/// Normally it's ~/.grin/main/tmp for mainnet
-	/// or ~/.grin/test/tmp for Testnet
+	/// Normally it's ~/.bmw/main/tmp for mainnet
+	/// or ~/.bmw/test/tmp for Testnet
 	pub fn get_tmp_dir(&self) -> PathBuf {
 		let mut tmp_dir = PathBuf::from(self.db_root.clone());
 		tmp_dir = tmp_dir
@@ -1292,11 +1375,14 @@ impl Chain {
 
 		let mut header_pmmr = self.header_pmmr.write();
 		let mut batch = self.store.batch()?;
+		let _verifier_cache = &self.verifier_cache;
 		txhashset::extending(
 			&mut header_pmmr,
 			&mut txhashset,
 			&mut batch,
-			|ext, batch| {
+			self.utxo_data.clone(),
+			self.verifier_cache.clone(),
+			|ext, _verifier_cache, batch| {
 				let extension = &mut ext.extension;
 				extension.rewind(&header, batch)?;
 
@@ -1523,7 +1609,15 @@ impl Chain {
 		}
 		let mut output_vec: Vec<Output> = vec![];
 		for (ref x, &y) in outputs.1.iter().zip(rangeproofs.1.iter()) {
-			output_vec.push(Output::new(x.features, x.commitment(), y));
+			output_vec.push(Output::new(
+				x.features,
+				x.commitment(),
+				y,
+				x.r_sig,
+				x.view_tag,
+				x.nonce,
+				x.onetime_pubkey,
+			));
 		}
 		Ok((outputs.0, last_index, output_vec))
 	}
@@ -1609,6 +1703,11 @@ impl Chain {
 			.map_err(|e| ErrorKind::StoreErr(e, "chain get block_sums".to_owned()).into())
 	}
 
+	/// Get the UtxoData
+	pub fn get_utxo_data(&self) -> Result<Option<Weak<RwLock<UtxoData>>>, Error> {
+		Ok(self.utxo_data.clone())
+	}
+
 	/// Gets the block header at the provided height.
 	/// Note: Takes a read lock on the header_pmmr.
 	pub fn get_header_by_height(&self, height: u64) -> Result<BlockHeader, Error> {
@@ -1618,7 +1717,7 @@ impl Chain {
 
 	/// Gets the header hash at the provided height.
 	/// Note: Takes a read lock on the header_pmmr.
-	fn get_header_hash_by_height(&self, height: u64) -> Result<Hash, Error> {
+	pub fn get_header_hash_by_height(&self, height: u64) -> Result<Hash, Error> {
 		self.header_pmmr.read().get_header_hash_by_height(height)
 	}
 
@@ -1684,6 +1783,91 @@ impl Chain {
 		};
 		let hash = header_pmmr.get_header_hash_by_height(pos.height)?;
 		Ok(self.get_block_header(&hash)?)
+	}
+
+	/// Get all kernels between the two specified heights.
+	pub fn get_all_kernels(
+		&self,
+		min_height: u64,
+		max_height: u64,
+	) -> Result<Vec<(TxKernel, u64, u64)>, Error> {
+		let head = self.head()?;
+
+		// check for illegal heights
+		if min_height > head.height || max_height > head.height || min_height > max_height {
+			return Err(ErrorKind::Other("invalid max/min height".to_string()).into());
+		}
+
+		// start with max_height
+		let mut cur_height = max_height;
+		let mut ret = vec![];
+		loop {
+			// loop through each time looking at a lower height
+			let header_head = self.get_header_by_height(cur_height)?;
+			let txhashset = self.txhashset.read();
+			let pmmr = txhashset.kernel_pmmr_at(&header_head);
+
+			// we read 13_334 max kernels per block + 1 so we know if we read all
+			// 13_334, we are on a lower block height so no infinite loop.
+			let res: Vec<(Hash, TxKernel)> = pmmr.get_last_n_insertions(13_334);
+
+			let mut additional_kernels = 0;
+			// look at all the kernels. If we don't have it, add to the return val.
+			for k in res {
+				let data = self.get_kernel_height(&k.1.excess, None, None)?.unwrap();
+				let height = data.1;
+				let mmr_index = data.2;
+
+				// if height < min_height return.
+				if height < min_height {
+					return Ok(ret);
+				}
+				let next = (k.1, height, mmr_index);
+				let mut i = ret.len();
+				let mut found = false;
+				// need to check for duplicates.
+				loop {
+					if i == 0 {
+						break;
+					}
+					i -= 1;
+					if ret[i].1 != height {
+						break;
+					}
+					if ret[i].eq(&next) {
+						found = true;
+					}
+				}
+				if !found {
+					additional_kernels += 1;
+					ret.push(next);
+				}
+				cur_height = height;
+			}
+
+			// this means we're done
+			if additional_kernels == 0 {
+				return Ok(ret);
+			}
+		}
+	}
+
+	/// Returns heights of specified kernels
+	pub fn get_kernel_heights(&self, excess: Vec<Commitment>) -> Result<Vec<u64>, Error> {
+		let head = self.head()?;
+
+		let index_list = self.txhashset.read().find_kernels(excess);
+		let mut ret = vec![];
+		for index in index_list {
+			if index != u64::MAX {
+				let header = self.get_header_for_kernel_index(index, Some(0), Some(head.height))?;
+				ret.push(header.height);
+			} else {
+				ret.push(u64::MAX);
+			}
+		}
+
+		Ok(ret)
 	}
 
 	/// Gets the kernel with a given excess and the block height it is included in.
@@ -1829,6 +2013,8 @@ fn setup_head(
 	header_pmmr: &mut txhashset::PMMRHandle<BlockHeader>,
 	sync_pmmr: &mut txhashset::PMMRHandle<BlockHeader>,
 	txhashset: &mut txhashset::TxHashSet,
+	utxo_data: Option<Weak<RwLock<UtxoData>>>,
+	verifier: Arc<RwLock<dyn VerifierCache>>,
 ) -> Result<(), Error> {
 	let mut batch = store.batch()?;
 
@@ -1878,44 +2064,57 @@ fn setup_head(
 				// to match the provided block header.
 				let header = batch.get_block_header(&head.last_block_h)?;
 
-				let res = txhashset::extending(header_pmmr, txhashset, &mut batch, |ext, batch| {
-					pipe::rewind_and_apply_fork(&header, ext, batch)?;
-
-					let extension = &mut ext.extension;
-
-					extension.validate_roots(&header)?;
-
-					// now check we have the "block sums" for the block in question
-					// if we have no sums (migrating an existing node) we need to go
-					// back to the txhashset and sum the outputs and kernels
-					if header.height > 0 && batch.get_block_sums(&header.hash()).is_err() {
-						debug!(
-							"init: building (missing) block sums for {} @ {}",
-							header.height,
-							header.hash()
-						);
-
-						// Do a full (and slow) validation of the txhashset extension
-						// to calculate the utxo_sum and kernel_sum at this block height.
-						let (utxo_sum, kernel_sum) = extension.validate_kernel_sums(&header)?;
-
-						// Save the block_sums to the db for use later.
-						batch.save_block_sums(
-							&header.hash(),
-							BlockSums {
-								utxo_sum,
-								kernel_sum,
-							},
+				let res = txhashset::extending(
+					header_pmmr,
+					txhashset,
+					&mut batch,
+					utxo_data.clone(),
+					verifier.clone(),
+					|ext, verifier_cache, batch| {
+						pipe::rewind_and_apply_fork(
+							&header,
+							ext,
+							verifier_cache,
+							batch,
+							utxo_data.clone(),
 						)?;
-					}
 
-					debug!(
-						"init: rewinding and validating before we start... {} at {}",
-						header.hash(),
-						header.height,
-					);
-					Ok(())
-				});
+						let extension = &mut ext.extension;
+
+						extension.validate_roots(&header)?;
+
+						// now check we have the "block sums" for the block in question
+						// if we have no sums (migrating an existing node) we need to go
+						// back to the txhashset and sum the outputs and kernels
+						if header.height > 0 && batch.get_block_sums(&header.hash()).is_err() {
+							debug!(
+								"init: building (missing) block sums for {} @ {}",
+								header.height,
+								header.hash()
+							);
+
+							// Do a full (and slow) validation of the txhashset extension
+							// to calculate the utxo_sum and kernel_sum at this block height.
+							let (utxo_sum, kernel_sum) = extension.validate_kernel_sums(&header)?;
+
+							// Save the block_sums to the db for use later.
+							batch.save_block_sums(
+								&header.hash(),
+								BlockSums {
+									utxo_sum,
+									kernel_sum,
+								},
+							)?;
+						}
+
+						debug!(
+							"init: rewinding and validating before we start... {} at {}",
+							header.hash(),
+							header.height,
+						);
+						Ok(())
+					},
+				);
 
 				if res.is_ok() {
 					break;
@@ -1925,9 +2124,22 @@ fn setup_head(
 					// delete the "bad" block and try again.
 					let prev_header = batch.get_block_header(&head.prev_block_h)?;
 
-					txhashset::extending(header_pmmr, txhashset, &mut batch, |ext, batch| {
-						pipe::rewind_and_apply_fork(&prev_header, ext, batch)
-					})?;
+					txhashset::extending(
+						header_pmmr,
+						txhashset,
+						&mut batch,
+						utxo_data.clone(),
+						verifier.clone(),
+						|ext, verifier_cache, batch| {
+							pipe::rewind_and_apply_fork(
+								&prev_header,
+								ext,
+								verifier_cache,
+								batch,
+								utxo_data.clone(),
+							)
+						},
+					)?;
 
 					// Now "undo" the latest block and forget it ever existed.
 					// We will request it from a peer during sync as necessary.
@@ -1949,17 +2161,28 @@ fn setup_head(
 			batch.save_body_head(&Tip::from_header(&genesis.header))?;
 
 			if !genesis.kernels().is_empty() {
-				let (utxo_sum, kernel_sum) = (sums, genesis as &dyn Committed)
-					.verify_kernel_sums(genesis.overage(), genesis.header.total_kernel_offset())?;
+				// utxo_data of None ok because genesis has no additional overage
+				let (utxo_sum, kernel_sum) = (sums, genesis as &dyn Committed).verify_kernel_sums(
+					genesis.overage(None),
+					genesis.header.total_kernel_offset(),
+				)?;
 				sums = BlockSums {
 					utxo_sum,
 					kernel_sum,
 				};
 			}
-			txhashset::extending(header_pmmr, txhashset, &mut batch, |ext, batch| {
-				ext.extension
-					.apply_block(&genesis, ext.header_extension, batch)
-			})?;
+
+			txhashset::extending(
+				header_pmmr,
+				txhashset,
+				&mut batch,
+				utxo_data,
+				verifier,
+				|ext, _verifier, batch| {
+					ext.extension
+						.apply_block(&genesis, ext.header_extension, batch)
+				},
+			)?;
 
 			// Save the block_sums to the db for use later.
 			batch.save_block_sums(&genesis.hash(), sums)?;

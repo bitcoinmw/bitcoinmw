@@ -22,10 +22,14 @@ use self::core::core::hash::Hash;
 use self::core::core::transaction::{self, Transaction};
 use self::core::core::{BlockHeader, BlockSums, Inputs, OutputIdentifier};
 use self::core::global::DEFAULT_ACCEPT_FEE_BASE;
+use bmw_utxo::utxo_data::UtxoData;
 use chrono::prelude::*;
 use failure::Fail;
+use grin_chain as chain;
 use grin_core as core;
 use grin_keychain as keychain;
+use grin_util::RwLock;
+use std::sync::Weak;
 
 /// Dandelion "epoch" length.
 const DANDELION_EPOCH_SECS: u16 = 600;
@@ -232,6 +236,9 @@ pub enum PoolError {
 	/// Transaction pool is over capacity, can't accept more transactions
 	#[fail(display = "Over capacity")]
 	OverCapacity,
+	/// Chain Error
+	#[fail(display = "Chain Error: {:?}", _0)]
+	ChainError(String),
 	/// Transaction fee is too low given its weight
 	#[fail(display = "Low fee transaction {}", _0)]
 	LowFeeTransaction(u64),
@@ -250,6 +257,10 @@ pub enum PoolError {
 	/// NRD kernels are not valid if relative_height rule not met.
 	#[fail(display = "NRD kernel relative height")]
 	NRDKernelRelativeHeight,
+	/// The new transaction would result in multiple notarizations in the pool
+	/// at the same time. Must prevent this.
+	#[fail(display = "Would result in multiple notarizations in the pool")]
+	MultipleNotarizations,
 	/// Other kinds of error (not yet pulled out into meaningful errors).
 	#[fail(display = "General pool error {}", _0)]
 	Other(String),
@@ -282,6 +293,12 @@ impl From<committed::Error> for PoolError {
 	}
 }
 
+impl From<chain::Error> for PoolError {
+	fn from(e: chain::Error) -> PoolError {
+		PoolError::ChainError(format!("{:?}", e))
+	}
+}
+
 /// Interface that the pool requires from a blockchain implementation.
 pub trait BlockChain: Sync + Send {
 	/// Verify any coinbase outputs being spent
@@ -304,6 +321,8 @@ pub trait BlockChain: Sync + Send {
 
 	fn get_block_header(&self, hash: &Hash) -> Result<BlockHeader, PoolError>;
 	fn get_block_sums(&self, hash: &Hash) -> Result<BlockSums, PoolError>;
+
+	fn get_utxo_data(&self) -> Result<Option<Weak<RwLock<UtxoData>>>, PoolError>;
 }
 
 /// Bridge between the transaction pool and the rest of the system. Handles

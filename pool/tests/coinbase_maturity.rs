@@ -21,6 +21,7 @@ use self::pool::types::PoolError;
 use self::util::RwLock;
 use crate::common::*;
 use grin_core as core;
+use grin_core::core::hash::Hashed;
 use grin_keychain as keychain;
 use grin_pool as pool;
 use grin_util as util;
@@ -53,7 +54,10 @@ fn test_coinbase_maturity() {
 	add_block(&chain, &[], &keychain);
 
 	let header_1 = chain.get_header_by_height(1).unwrap();
-	let tx = test_transaction_spending_coinbase(&keychain, &header_1, vec![100]);
+	let block_1 = chain.get_block(&header_1.hash()).unwrap();
+	let output = block_1.outputs()[0];
+	let index: u64 = chain.get_output_pos(&output.commitment()).unwrap() - 1;
+	let tx = test_transaction_spending_coinbase(&keychain, &header_1, output, index, vec![100]);
 
 	// Coinbase is not yet matured and cannot be spent.
 	let header = chain.head_header().unwrap();

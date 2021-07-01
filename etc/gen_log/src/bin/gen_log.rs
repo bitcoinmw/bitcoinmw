@@ -33,6 +33,7 @@ use std::sync::mpsc::Receiver;
 use std::sync::mpsc::Sender;
 use std::thread;
 use std::thread::JoinHandle;
+use util::print_util::print;
 
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
 struct BtcBlock {
@@ -116,7 +117,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 		for line in stdout_lines {
 			let line = line.unwrap();
-			println!("processing block {}: {:?}", i, line);
+			print(format!("Processing block {}", i));
 			let mut inner_cmd = Command::new("bitcoin-cli")
 				.arg("-rpcuser=".to_owned() + &rpcuser)
 				.arg("-rpcpassword=".to_owned() + &rpcpassword)
@@ -193,8 +194,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 						if tx_id.is_some() && index.is_some() {
 							let tx_id = tx_id.unwrap().as_str().unwrap();
 							let index = index.unwrap();
-							//write!(file, "rem {} {}\n", tx_id, index).unwrap();
-							tx.send(format!("rem {} {}\n", tx_id, index)).unwrap();
+							tx.send(format!("rem {} {} {}\n", tx_id, index, i)).unwrap();
 						}
 						index_in = index_in + 1;
 					}
@@ -216,11 +216,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 							if addresses.is_some() {
 								let addresses = addresses.unwrap();
 								for address in addresses.as_array() {
-									for x in 0..address.len() {
+									for x in 0..1 {
 										let address = address[x].as_str().unwrap().to_string();
 										tx.send(format!(
-											"add {} {} {} {}\n",
-											address, tx_id, n, value
+											"add {} {} {} {} {}\n",
+											address, tx_id, n, value, i,
 										))
 										.unwrap();
 									}
@@ -237,30 +237,38 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 									if hex.is_ok() {
 										let hex = hex.unwrap();
 										let public_key = bitcoin::PublicKey::from_slice(&hex);
-										// TODO: Handle these errors later.
 										if public_key.is_ok() {
 											let public_key = public_key.unwrap();
 											let address =
 												Address::p2pkh(&public_key, network).to_string();
 											tx.send(format!(
-												"add {} {} {} {}\n",
-												address, tx_id, n, value,
+												"add {} {} {} {} {}\n",
+												address, tx_id, n, value, i,
 											))
 											.unwrap();
 										} else {
 											tx.send(format!(
-												"ERROR: [block {}] public_key decode failed: {}\n",
-												i, asm
+												"add {} {} {} {} {}\n",
+												"none", tx_id, n, value, i,
 											))
 											.unwrap();
 										}
 									} else {
+										// no address, send to 'none' for now.
 										tx.send(format!(
-											"ERROR: [block {}] hex decode failed: {}\n",
-											i, asm
+											"add {} {} {} {} {}\n",
+											"none", tx_id, n, value, i,
 										))
 										.unwrap();
 									}
+
+									//else {
+									//	tx.send(format!(
+									//		"ERROR: [block {}] hex decode failed: {}\n",
+									//		i, asm
+									//	))
+									//	.unwrap();
+									//}
 								}
 							}
 						}

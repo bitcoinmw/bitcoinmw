@@ -22,7 +22,11 @@ use crate::error::{Error, ErrorKind};
 use crate::store::Batch;
 use crate::types::CommitPos;
 use crate::util::secp::pedersen::{Commitment, RangeProof};
+use crate::util::RwLock;
+use grin_core::core::verifier_cache::VerifierCache;
+use grin_core::core::CommitWrapper;
 use grin_store::pmmr::PMMRBackend;
+use std::sync::Arc;
 
 /// Readonly view of the UTXO set (based on output MMR).
 pub struct UTXOView<'a> {
@@ -51,11 +55,13 @@ impl<'a> UTXOView<'a> {
 	pub fn validate_block(
 		&self,
 		block: &Block,
+		verifier: Arc<RwLock<dyn VerifierCache>>,
 		batch: &Batch<'_>,
 	) -> Result<Vec<(OutputIdentifier, CommitPos)>, Error> {
 		for output in block.outputs() {
 			self.validate_output(output, batch)?;
 		}
+		self.validate_input_signatures(&block.inputs(), verifier, batch)?;
 		self.validate_inputs(&block.inputs(), batch)
 	}
 
@@ -65,11 +71,13 @@ impl<'a> UTXOView<'a> {
 	pub fn validate_tx(
 		&self,
 		tx: &Transaction,
+		verifier: Arc<RwLock<dyn VerifierCache>>,
 		batch: &Batch<'_>,
 	) -> Result<Vec<(OutputIdentifier, CommitPos)>, Error> {
 		for output in tx.outputs() {
 			self.validate_output(output, batch)?;
 		}
+		self.validate_input_signatures(&tx.inputs(), verifier, batch)?;
 		self.validate_inputs(&tx.inputs(), batch)
 	}
 
@@ -81,37 +89,52 @@ impl<'a> UTXOView<'a> {
 		inputs: &Inputs,
 		batch: &Batch<'_>,
 	) -> Result<Vec<(OutputIdentifier, CommitPos)>, Error> {
-		match inputs {
-			Inputs::CommitOnly(inputs) => {
-				let outputs_spent: Result<Vec<_>, Error> = inputs
-					.iter()
-					.map(|input| {
-						self.validate_input(input.commitment(), batch)
-							.and_then(|(out, pos)| Ok((out, pos)))
-					})
-					.collect();
-				outputs_spent
+		let outputs_spent: Result<Vec<_>, Error> = inputs
+			.0
+			.iter()
+			.map(|input| {
+				self.validate_input(input.commitment(), batch)
+					.and_then(|(out, pos)| Ok((out, pos)))
+			})
+			.collect();
+		outputs_spent
+	}
+
+	/// This method checks the input signatures only
+	pub fn validate_input_signatures(
+		&self,
+		inputs: &Inputs,
+		verifier: Arc<RwLock<dyn VerifierCache>>,
+		batch: &Batch<'_>,
+	) -> Result<Vec<(OutputIdentifier, CommitPos)>, Error> {
+		let mut res: Vec<(OutputIdentifier, CommitPos)> = vec![];
+		let inputs = {
+			let mut accomplished_inputs_with_sig = vec![];
+			for input in &inputs.0 {
+				let validated = self.validate_input_with_sig(input.commitment(), batch)?;
+				accomplished_inputs_with_sig.push((validated.0, validated.1, input.clone()));
+				res.push((validated.0, validated.2));
 			}
-			Inputs::FeaturesAndCommit(inputs) => {
-				let outputs_spent: Result<Vec<_>, Error> = inputs
-					.iter()
-					.map(|input| {
-						self.validate_input(input.commitment(), batch)
-							.and_then(|(out, pos)| {
-								// Unspent output found.
-								// Check input matches full output identifier.
-								if out == input.into() {
-									Ok((out, pos))
-								} else {
-									error!("input mismatch: {:?}, {:?}, {:?}", out, pos, input);
-									Err(ErrorKind::Other("input mismatch".into()).into())
-								}
-							})
-					})
-					.collect();
-				outputs_spent
-			}
+			accomplished_inputs_with_sig
+		};
+
+		//let filtered_accomplished_inputs_with_sig = inputs;
+		let filtered_accomplished_inputs_with_sig = {
+			let mut verifier = verifier.write();
+			verifier.filter_input_with_sig_unverified(&inputs)
+		};
+
+		// Verify the unverified inputs signatures.
+		// Signature verification need public key (i.e. that P' in this context), the P' has to be queried from chain UTXOs set.
+		CommitWrapper::batch_sig_verify(&filtered_accomplished_inputs_with_sig)?;
+
+		// Cache the successful verification results for the new inputs_with_sig.
+		{
+			let mut verifier = verifier.write();
+			verifier.add_input_with_sig_verified(filtered_accomplished_inputs_with_sig);
 		}
+
+		Ok(res)
 	}
 
 	// Input is valid if it is spending an (unspent) output
@@ -139,6 +162,34 @@ impl<'a> UTXOView<'a> {
 		Err(ErrorKind::AlreadySpent(input).into())
 	}
 
+	/// This function verifies the input signature
+	fn validate_input_with_sig(
+		&self,
+		input: Commitment,
+		batch: &Batch<'_>,
+	) -> Result<(OutputIdentifier, Hash, CommitPos), Error> {
+		let commit_pos = batch.get_output_pos_height(&input)?;
+		if let Some(cp) = commit_pos {
+			if let Some(out) = self.output_pmmr.get_data(cp.pos) {
+				return if out.commitment() == input {
+					if let Some(h) = self.rproof_pmmr.get_hash(cp.pos) {
+						Ok((out, h, cp))
+					} else {
+						error!("rproof not exist: {:?}, {:?}, {:?}", out, cp, input);
+						Err(ErrorKind::Other("rproof not exist".into()).into())
+					}
+				} else {
+					error!("input mismatch: {:?}, {:?}, {:?}", out, cp, input);
+					Err(
+						ErrorKind::Other("input mismatch (output_pos index mismatch?)".into())
+							.into(),
+					)
+				};
+			}
+		}
+		Err(ErrorKind::AlreadySpent(input).into())
+	}
+
 	// Output is valid if it would not result in a duplicate commitment in the output MMR.
 	fn validate_output(&self, output: &Output, batch: &Batch<'_>) -> Result<(), Error> {
 		if let Ok(pos) = batch.get_output_pos(&output.commitment()) {
@@ -160,6 +211,18 @@ impl<'a> UTXOView<'a> {
 			},
 			None => Err(ErrorKind::OutputNotFound.into()),
 		}
+	}
+
+	/// Get a list of spent utxos from the input list of positions
+	pub fn get_mmr_check_list(&self, list: Vec<u64>) -> Result<Vec<u64>, Error> {
+		let mut ret = vec![];
+		for pos in list {
+			match self.output_pmmr.get_data(pos) {
+				None => ret.push(pos),
+				_ => {}
+			}
+		}
+		Ok(ret)
 	}
 
 	/// Verify we are not attempting to spend any coinbase outputs

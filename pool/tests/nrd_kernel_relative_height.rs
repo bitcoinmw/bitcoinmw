@@ -14,10 +14,9 @@
 
 pub mod common;
 
-use self::core::consensus;
 use self::core::core::hash::Hashed;
 use self::core::core::verifier_cache::LruVerifierCache;
-use self::core::core::{HeaderVersion, KernelFeatures, NRDRelativeHeight, TxKernel};
+use self::core::core::{KernelFeatures, NRDRelativeHeight, TxKernel};
 use self::core::global;
 use self::core::libtx::aggsig;
 use self::keychain::{BlindingFactor, ExtKeychain, Keychain};
@@ -25,6 +24,7 @@ use self::pool::types::PoolError;
 use self::util::RwLock;
 use crate::common::*;
 use grin_core as core;
+use grin_core::core::transaction::Weighting;
 use grin_keychain as keychain;
 use grin_pool as pool;
 use grin_util as util;
@@ -34,10 +34,11 @@ use std::sync::Arc;
 fn test_nrd_kernel_relative_height() -> Result<(), PoolError> {
 	util::init_test_logger();
 	global::set_local_chain_type(global::ChainTypes::AutomatedTesting);
-	global::set_local_accept_fee_base(10);
+	global::set_local_accept_fee_base(0);
 	global::set_local_nrd_enabled(true);
 
 	let keychain: ExtKeychain = Keychain::from_random_seed(false).unwrap();
+	let vc = Arc::new(RwLock::new(LruVerifierCache::new()));
 
 	let db_root = "target/.nrd_kernel_relative_height";
 	clean_output_dir(db_root.into());
@@ -57,26 +58,31 @@ fn test_nrd_kernel_relative_height() -> Result<(), PoolError> {
 	add_some_blocks(&chain, 3, &keychain);
 
 	let header_1 = chain.get_header_by_height(1).unwrap();
+	let block_1 = chain.get_block(&header_1.hash()).unwrap();
+	let output = block_1.outputs()[0];
+	let index: u64 = chain.get_output_pos(&output.commitment()).unwrap() - 1;
 
 	// Now create tx to spend an early coinbase (now matured).
 	// Provides us with some useful outputs to test with.
-	let initial_tx =
-		test_transaction_spending_coinbase(&keychain, &header_1, vec![1_000, 2_000, 3_000, 4_000]);
+	let initial_tx = test_transaction_spending_coinbase(
+		&keychain,
+		&header_1,
+		output,
+		index,
+		vec![101, 102, 204, 205],
+	);
 
 	// Mine that initial tx so we can spend it with multiple txs.
 	add_block(&chain, &[initial_tx], &keychain);
 
-	// mine past HF4 to see effect of set_local_accept_fee_base
-	add_some_blocks(&chain, 8, &keychain);
+	// mine past maturity
+	add_some_blocks(&chain, 4, &keychain);
 
 	let header = chain.head_header().unwrap();
 
-	assert_eq!(header.height, 4 * consensus::TESTING_HARD_FORK_INTERVAL);
-	assert_eq!(header.version, HeaderVersion(1));
-
 	let (tx1, tx2, tx3) = {
 		let mut kernel = TxKernel::with_features(KernelFeatures::NoRecentDuplicate {
-			fee: 600.into(),
+			fee: 179.into(),
 			relative_height: NRDRelativeHeight::new(2)?,
 		});
 		let msg = kernel.msg_to_sign().unwrap();
@@ -98,23 +104,27 @@ fn test_nrd_kernel_relative_height() -> Result<(), PoolError> {
 
 		let tx1 = test_transaction_with_kernel(
 			&keychain,
-			vec![1_000, 2_000],
-			vec![2_400],
+			vec![101, 102],
+			vec![24],
 			kernel.clone(),
 			excess.clone(),
+			&chain,
 		);
 
+		tx1.validate(Weighting::AsTransaction, vc.clone(), 4, None, None)?;
 		let tx2 = test_transaction_with_kernel(
 			&keychain,
-			vec![2_400],
-			vec![1_800],
+			vec![204],
+			vec![25],
 			kernel2.clone(),
 			excess.clone(),
+			&chain,
 		);
+		tx2.validate(Weighting::AsTransaction, vc.clone(), 4, None, None)?;
 
 		// Now reuse kernel excess for tx3 but with NRD relative_height=1 (and different fee).
 		let mut kernel_short = TxKernel::with_features(KernelFeatures::NoRecentDuplicate {
-			fee: 300.into(),
+			fee: 3.into(),
 			relative_height: NRDRelativeHeight::new(1)?,
 		});
 		let msg_short = kernel_short.msg_to_sign().unwrap();
@@ -123,14 +133,15 @@ fn test_nrd_kernel_relative_height() -> Result<(), PoolError> {
 			aggsig::sign_with_blinding(&keychain.secp(), &msg_short, &excess, Some(&pubkey))
 				.unwrap();
 		kernel_short.verify().unwrap();
-
 		let tx3 = test_transaction_with_kernel(
 			&keychain,
-			vec![1_800],
-			vec![1_500],
+			vec![205],
+			vec![202],
 			kernel_short.clone(),
 			excess.clone(),
+			&chain,
 		);
+		tx3.validate(Weighting::AsTransaction, vc.clone(), 4, None, None)?;
 
 		(tx1, tx2, tx3)
 	};
@@ -188,12 +199,14 @@ fn test_nrd_kernel_relative_height() -> Result<(), PoolError> {
 	assert_eq!(pool.stempool.size(), 0);
 
 	// Confirm we cannot add tx2 to stempool with tx1 in previous block (NRD relative_height=2)
+
 	assert_eq!(
 		pool.add_to_pool(test_source(), tx2.clone(), true, &header),
 		Err(PoolError::NRDKernelRelativeHeight)
 	);
 
 	// Confirm we cannot add tx2 to txpool with tx1 in previous block (NRD relative_height=2)
+
 	assert_eq!(
 		pool.add_to_pool(test_source(), tx2.clone(), false, &header),
 		Err(PoolError::NRDKernelRelativeHeight)

@@ -26,19 +26,80 @@ use self::core::genesis;
 use self::core::global;
 use self::core::libtx::{build, reward, ProofBuilder};
 use self::core::pow;
-use self::keychain::{BlindingFactor, ExtKeychain, ExtKeychainPath, Keychain};
+use self::keychain::{BlindingFactor, Keychain};
 use self::pool::types::*;
 use self::pool::TransactionPool;
 use self::util::RwLock;
+use bmw_utxo::utxo_data::UtxoData;
 use chrono::Duration;
 use grin_chain as chain;
 use grin_core as core;
+use grin_core::address::Address;
+use grin_core::core::Output;
+use grin_core::libtx::proof::PaymentId;
 use grin_keychain as keychain;
 use grin_pool as pool;
 use grin_util as util;
+use grin_util::secp::key::{PublicKey, SecretKey};
+use rand::thread_rng;
 use std::convert::TryInto;
 use std::fs;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
+
+/// get the recipient_address for the value skey
+fn get_recipient_address(value: u8) -> Address {
+	let value_skey = get_value_skey(value);
+	let secp = util::static_secp_instance();
+	let secp = secp.lock();
+	Address::from_one_pubkey(
+		&PublicKey::from_secret_key(&secp, &value_skey).unwrap(),
+		global::ChainTypes::AutomatedTesting,
+	)
+}
+
+/// get the secret key used for value
+fn get_value_skey(value: u8) -> SecretKey {
+	let secp = util::static_secp_instance();
+	let secp = secp.lock();
+	SecretKey::from_slice(
+		&secp,
+		&[
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			value as u8,
+			1,
+		],
+	)
+	.unwrap()
+}
 
 /// Build genesis block with reward (non-empty, like we have in mainnet).
 pub fn genesis_block<K>(_keychain: &K) -> Block
@@ -79,18 +140,70 @@ where
 	let height = prev.height + 1;
 	let next_header_info = consensus::next_difficulty(height, chain.difficulty_iter().unwrap());
 	let fee = txs.iter().map(|x| x.fee(height)).sum();
-	let key_id = ExtKeychainPath::new(1, height as u32, 0, 0, 0).to_identifier();
-	let reward = reward::output(
+
+	let payment_id = PaymentId::new();
+	let (private_nonce, _pub_nonce) = keychain.secp().generate_keypair(&mut thread_rng()).unwrap();
+	let skey = SecretKey::from_slice(
+		&keychain.secp(),
+		&[
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			height as u8,
+		],
+	)
+	.unwrap();
+	let pub_view = PublicKey::from_secret_key(keychain.secp(), &skey).unwrap();
+	let recipient_addr = Address::from_one_pubkey(&pub_view, global::ChainTypes::AutomatedTesting);
+
+	let reward = reward::nit_output(
 		keychain,
 		&ProofBuilder::new(keychain),
-		&key_id,
+		private_nonce,
+		recipient_addr.clone(),
+		payment_id,
 		fee,
 		false,
 		height,
 	)
 	.unwrap();
 
-	let mut block = Block::new(&prev, txs, next_header_info.clone().difficulty, reward).unwrap();
+	let mut block = Block::new(
+		&prev,
+		txs,
+		next_header_info.clone().difficulty,
+		reward,
+		None,
+	)
+	.unwrap();
 
 	block.header.timestamp = prev.timestamp + Duration::seconds(60);
 	block.header.pow.secondary_scaling = next_header_info.secondary_scaling;
@@ -122,6 +235,10 @@ impl BlockChain for ChainAdapter {
 			.map_err(|_| PoolError::Other("failed to get chain head".into()))
 	}
 
+	fn get_utxo_data(&self) -> Result<Option<Weak<RwLock<UtxoData>>>, PoolError> {
+		Ok(None)
+	}
+
 	fn get_block_header(&self, hash: &Hash) -> Result<BlockHeader, PoolError> {
 		self.chain
 			.get_block_header(hash)
@@ -138,7 +255,7 @@ impl BlockChain for ChainAdapter {
 		self.chain.validate_tx(tx).map_err(|e| match e.kind() {
 			chain::ErrorKind::Transaction(txe) => txe.into(),
 			chain::ErrorKind::NRDRelativeHeight => PoolError::NRDKernelRelativeHeight,
-			_ => PoolError::Other("failed to validate tx".into()),
+			_ => PoolError::Other(format!("failed to validate tx: {:?}", e).into()),
 		})
 	}
 
@@ -187,6 +304,8 @@ where
 pub fn test_transaction_spending_coinbase<K>(
 	keychain: &K,
 	header: &BlockHeader,
+	output: Output,
+	index: u64,
 	output_values: Vec<u64>,
 ) -> Transaction
 where
@@ -200,16 +319,60 @@ where
 	assert!(fees >= 0);
 
 	let mut tx_elements = Vec::new();
+	let height = header.height;
+	let height_skey = SecretKey::from_slice(
+		&keychain.secp(),
+		&[
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			height as u8,
+		],
+	)
+	.unwrap();
 
 	// single input spending a single coinbase (deterministic key_id aka height)
 	{
-		let key_id = ExtKeychain::derive_key_id(1, header.height as u32, 0, 0, 0);
-		tx_elements.push(build::coinbase_input(coinbase_reward, key_id));
+		tx_elements.push(build::input(coinbase_reward, height_skey, output, index));
 	}
 
 	for output_value in output_values {
-		let key_id = ExtKeychain::derive_key_id(1, output_value as u32, 0, 0, 0);
-		tx_elements.push(build::output(output_value, key_id));
+		let value_skey = get_value_skey(output_value as u8);
+		let recipient_addr = get_recipient_address(output_value as u8);
+		tx_elements.push(build::output_wrnp(
+			output_value,
+			value_skey,
+			recipient_addr,
+			PaymentId::new(),
+		));
 	}
 
 	build::transaction(
@@ -227,6 +390,7 @@ pub fn test_transaction<K>(
 	keychain: &K,
 	input_values: Vec<u64>,
 	output_values: Vec<u64>,
+	chain: &Chain,
 ) -> Transaction
 where
 	K: Keychain,
@@ -243,6 +407,7 @@ where
 		KernelFeatures::Plain {
 			fee: (fees as u64).try_into().unwrap(),
 		},
+		chain,
 	)
 }
 
@@ -251,6 +416,7 @@ pub fn test_transaction_with_kernel_features<K>(
 	input_values: Vec<u64>,
 	output_values: Vec<u64>,
 	kernel_features: KernelFeatures,
+	chain: &Chain,
 ) -> Transaction
 where
 	K: Keychain,
@@ -258,13 +424,33 @@ where
 	let mut tx_elements = Vec::new();
 
 	for input_value in input_values {
-		let key_id = ExtKeychain::derive_key_id(1, input_value as u32, 0, 0, 0);
-		tx_elements.push(build::input(input_value, key_id));
+		let value_skey = get_value_skey(input_value as u8);
+		let recipient_addr = get_recipient_address(input_value as u8);
+		let output = build::output_wrnp_impl(
+			keychain,
+			&ProofBuilder::new(keychain),
+			input_value,
+			&value_skey,
+			&recipient_addr,
+			PaymentId::new(),
+		)
+		.unwrap()
+		.0;
+
+		let index: u64 = chain.get_output_pos(&output.commitment()).unwrap() - 1;
+		let output = chain.get_unspent_output_at(index + 1).unwrap();
+		tx_elements.push(build::input(input_value, value_skey, output, index));
 	}
 
 	for output_value in output_values {
-		let key_id = ExtKeychain::derive_key_id(1, output_value as u32, 0, 0, 0);
-		tx_elements.push(build::output(output_value, key_id));
+		let value_skey = get_value_skey(output_value as u8);
+		let recipient_addr = get_recipient_address(output_value as u8);
+		tx_elements.push(build::output_wrnp(
+			output_value,
+			value_skey,
+			recipient_addr,
+			PaymentId::new(),
+		));
 	}
 
 	build::transaction(
@@ -282,6 +468,7 @@ pub fn test_transaction_with_kernel<K>(
 	output_values: Vec<u64>,
 	kernel: TxKernel,
 	excess: BlindingFactor,
+	chain: &Chain,
 ) -> Transaction
 where
 	K: Keychain,
@@ -289,13 +476,32 @@ where
 	let mut tx_elements = Vec::new();
 
 	for input_value in input_values {
-		let key_id = ExtKeychain::derive_key_id(1, input_value as u32, 0, 0, 0);
-		tx_elements.push(build::input(input_value, key_id));
+		let value_skey = get_value_skey(input_value as u8);
+		let recipient_addr = get_recipient_address(input_value as u8);
+		let output = build::output_wrnp_impl(
+			keychain,
+			&ProofBuilder::new(keychain),
+			input_value,
+			&value_skey,
+			&recipient_addr,
+			PaymentId::new(),
+		)
+		.unwrap()
+		.0;
+		let index: u64 = chain.get_output_pos(&output.commitment()).unwrap() - 1;
+		let output = chain.get_unspent_output_at(index + 1).unwrap();
+		tx_elements.push(build::input(input_value, value_skey, output, index));
 	}
 
 	for output_value in output_values {
-		let key_id = ExtKeychain::derive_key_id(1, output_value as u32, 0, 0, 0);
-		tx_elements.push(build::output(output_value, key_id));
+		let value_skey = get_value_skey(output_value as u8);
+		let recipient_addr = get_recipient_address(output_value as u8);
+		tx_elements.push(build::output_wrnp(
+			output_value,
+			value_skey,
+			recipient_addr,
+			PaymentId::new(),
+		));
 	}
 
 	build::transaction_with_kernel(

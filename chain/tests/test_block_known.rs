@@ -22,7 +22,7 @@ use grin_util as util;
 
 #[test]
 fn check_known() {
-	let chain_dir = ".grin.check_known";
+	let chain_dir = ".bmw.check_known";
 	util::init_test_logger();
 	clean_output_dir(chain_dir);
 

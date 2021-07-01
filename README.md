@@ -1,20 +1,17 @@
-[![Build Status](https://dev.azure.com/mimblewimble/grin/_apis/build/status/mimblewimble.grin?branchName=master)](https://dev.azure.com/mimblewimble/grin/_build/latest?definitionId=1&branchName=master)
-[![Coverage Status](https://img.shields.io/codecov/c/github/mimblewimble/grin/master.svg)](https://codecov.io/gh/mimblewimble/grin)
-[![Chat](https://img.shields.io/gitter/room/grin_community/Lobby.svg)](https://gitter.im/grin_community/Lobby)
-[![Support](https://img.shields.io/badge/support-on%20gitter-brightgreen.svg)](https://gitter.im/grin_community/support)
-[![Documentation Wiki](https://img.shields.io/badge/doc-wiki-blue.svg)](https://github.com/mimblewimble/docs/wiki)
+[![Build Status]()https://dev.azure.com/bitcoinmw/bitcoinmw/_apis/build/status/bitcoinmw.bitcoinmw?branchName=master](https://dev.azure.com/bitcoinmw/bitcoinmw/_apis/build/status/bitcoinmw.bitcoinmw?branchName=master)
+[![Documentation Wiki](https://img.shields.io/badge/doc-wiki-blue.svg)](https://github.com/bitcoinmw/docs/wiki)
 [![Release Version](https://img.shields.io/github/release/mimblewimble/grin.svg)](https://github.com/mimblewimble/grin/releases)
-[![License](https://img.shields.io/github/license/mimblewimble/grin.svg)](https://github.com/mimblewimble/grin/blob/master/LICENSE)
+[![License](https://img.shields.io/github/license/mimblewimble/grin.svg)](https://github.com/bitcoinmw/bitcoinmw/blob/master/LICENSE)
 
-# Grin
+# Bitcoin MW
 
-Grin is an in-progress implementation of the Mimblewimble protocol. Many characteristics are still undefined but the following constitutes a first set of choices:
+Bitcoin MW is an implementation of the Mimblewimble protocol that maintains the Bitcoin (BTC) UTXO set with no pre-mine, dev fund, or dev tax. Thus, it is a hard fork of Bitcoin. The Bitcoin UTXO set is installed into an entirely new application which adds privacy, improved scaling, and fungibility characteristics. Whenever there is a fork of Bitcoin, which side of the fork is "Bitcoin" is decided solely in the order book. As developers, we do not make that decision. We only choose which code to maintain. We believe this fork is worthy of our attention and leave it up to the holders of Bitcoin to decide where to assign value.
 
   * Clean and minimal implementation, and aiming to stay as such.
   * Follows the Mimblewimble protocol, which provides hidden amounts and scaling advantages.
   * Cuckoo Cycle proof of work in two variants named Cuckaroo (ASIC-resistant) and Cuckatoo (ASIC-targeted).
   * Relatively fast block time: one minute.
-  * Fixed block reward over time with a decreasing dilution.
+  * 
   * Transaction fees are based on the number of Outputs created/destroyed and total transaction size.
   * Smooth curve for difficulty adjustments.
 

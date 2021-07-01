@@ -30,7 +30,7 @@ To build and try out BitcoinMW, see the [build docs](doc/build.md).
 
 ## Philosophy
 
-BitcoinMW believes that the BTC utxo set is sacrosanct, but which code user's run is open to debate. May the best implementation of Bitcoin win out.
+BitcoinMW believes that the BTC utxo set and supply cap is sacrosanct. But, which code users run is open to debate. May the best implementation of Bitcoin win out.
 
 Be the change you wish to see in the world.
 

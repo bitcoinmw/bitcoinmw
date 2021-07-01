@@ -1,4 +1,4 @@
-[![Build Status](https://dev.azure.com/bitcoinmw/bitcoinmw/_apis/build/status/bitcoinmw.bitcoinmw?branchName=master](https://dev.azure.com/bitcoinmw/bitcoinmw/_apis/build/status/bitcoinmw.bitcoinmw?branchName=master)
+[![Build Status](https://dev.azure.com/bitcoinmw/bitcoinmw/_apis/build/status/bitcoinmw.bitcoinmw?branchName=master)](https://dev.azure.com/bitcoinmw/bitcoinmw/_apis/build/status/bitcoinmw.bitcoinmw?branchName=master)
 [![Documentation Wiki](https://img.shields.io/badge/doc-wiki-blue.svg)](https://github.com/bitcoinmw/docs/wiki)
 [![Release Version](https://img.shields.io/github/release/bitcoinmw/bitcoinmw.svg)](https://github.com/bitcoinmw/bitcoinmw/releases)
 [![License](https://img.shields.io/github/license/bitcoinmw/bitcoinmw.svg)](https://github.com/bitcoinmw/bitcoinmw/blob/master/LICENSE)

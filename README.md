@@ -9,39 +9,29 @@ Bitcoin MW is an implementation of the Mimblewimble protocol that maintains the 
 
   * Clean and minimal implementation, and aiming to stay as such.
   * Follows the Mimblewimble protocol, which provides hidden amounts and scaling advantages.
-  * Cuckoo Cycle proof of work in two variants named Cuckaroo (ASIC-resistant) and Cuckatoo (ASIC-targeted).
+  * Memory bound, asic-resistant Cuckoo Cycle proof of work (C29d)
   * Relatively fast block time: one minute.
   * Bitcoin's limited supply schedule (starting with the 3.125 coins per 10 minutes epoch) with an extended long tail reward that lasts 1,000 years. Total supply cap is still 21 million.
   * Transaction fees are based on the number of Outputs created/destroyed and total transaction size.
   * Smooth curve for difficulty adjustments.
 
-To learn more, read our [introduction to Mimblewimble and Grin](doc/intro.md).
-
 ## Status
 
-Grin is live with mainnet. Still, much is left to be done and [contributions](CONTRIBUTING.md) are welcome (see below). Check our [mailing list archives](https://lists.launchpad.net/mimblewimble/) for the latest status.
+BitcoinMW's live with testnet. Launch of mainnet planned for early 2022.
 
 ## Contributing
 
 To get involved, read our [contributing docs](CONTRIBUTING.md).
 
-Find us:
-
-* Chat: [Keybase](https://keybase.io/team/grincoin), more instructions on how to join [here](https://grin.mw/community).
-* Mailing list: join the [~Mimblewimble team](https://launchpad.net/~mimblewimble) and subscribe on Launchpad.
-* Twitter for the Grin council: [@grincouncil](https://twitter.com/grincouncil)
-
 ## Getting Started
 
-To learn more about the technology, read our [introduction](doc/intro.md).
-
-To build and try out Grin, see the [build docs](doc/build.md).
+To build and try out BitcoinMW, see the [build docs](doc/build.md).
 
 ## Philosophy
 
-Grin likes itself small and easy on the eyes. It wants to be inclusive and welcoming for all walks of life, without judgement. Grin is terribly ambitious, but not at the detriment of others, rather to further us all. It may have strong opinions to stay in line with its objectives, which doesn't mean disrespect of others' ideas.
+BitcoinMW believes that the BTC utxo set is sacrosanct, but which code user's run is open to debate. May the best implementation of Bitcoin win out.
 
-We believe in pull requests, data and scientific research. We do not believe in unfounded beliefs.
+Be the change you wish to see in the world.
 
 ## Credits
 
@@ -60,4 +50,3 @@ Uno Ab Alto.
 ## License
 
 Apache License v2.0.
-

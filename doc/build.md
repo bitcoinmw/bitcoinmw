@@ -1,5 +1,7 @@
 # BitcoinMW - Build, Configuration, and Running
 
+Note: this page is no longer maintained. See https://github.com/bitcoinmw/docs/wiki/Node
+
 ## Supported Platforms
 
 BitcoinMW's programming language `rust` has build targets for most platforms.

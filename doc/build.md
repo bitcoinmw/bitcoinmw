@@ -113,8 +113,6 @@ docker build -t bmw -f etc/Dockerfile .
 ```
 For testnet, use `etc/Dockerfile.testnet` instead
 
-You can bind-mount your grin cache to run inside the container.
-
 ```sh
 docker run -it -d -v $HOME/.bmw:/root/.bmw bmw 
 ```
@@ -123,7 +121,7 @@ Using a named volume copies default configurations upon volume creation.
 
 ## Cross-platform builds
 
-Rust (cargo) can build grin for many platforms, so in theory running `bmw`
+Rust (cargo) can build bmw for many platforms, so in theory running `bmw`
 as a validating node on your low powered device might be possible.
 To cross-compile `bmw` on a x86 Linux platform and produce ARM binaries,
 say, for a Raspberry Pi.

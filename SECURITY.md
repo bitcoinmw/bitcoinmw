@@ -57,7 +57,7 @@ BitcoinMW's responsible disclosure standard includes some general language about
 [Bounty Payments](https://github.com/RD-Crypto-Spec/Responsible-Disclosure/tree/82e08d2736ea9dbe43484a3317e4bce214163bd0#bounty-payments)
 and [Acknowledgements](https://github.com/RD-Crypto-Spec/Responsible-Disclosure/tree/82e08d2736ea9dbe43484a3317e4bce214163bd0#acknowledgements).
 
-BitcoinMW is a **traditional open source project with limited to no direct funding**.
+BitcoinMW is a **traditional open source project with no direct funding**.
 As such, we have little means with which to compensate security researchers for
 their contributions. We recognize this is a shame and intend to do our best to
 still make these worth while by:

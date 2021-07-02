@@ -18,6 +18,8 @@ Run all tests with `cargo test --all` and please remember to test locally before
 
 After creating a PR on github, the code will be tested automatically by the Azure build pipeline on multiple platforms. You can see the output here: https://dev.azure.com/bitcoinmw/bitcoinmw/_build
 
+If you break the build, please revert your code right away and then address the bug and recheck in. We like to keep the build working at all times.
+
 ### Building quality
 
 The most important thing you can do alongside - or even before - changing code, is adding tests for how bitcoinmw should and should not work. See the various `tests` folders and derive test that are already there in bitcoinmw.

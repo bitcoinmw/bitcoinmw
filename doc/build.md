@@ -1,21 +1,14 @@
-# Grin - Build, Configuration, and Running
-
-*Read this in other languages: [Español](translations/build_ES.md), [Korean](translations/build_KR.md), [日本語](translations/build_JP.md), [简体中文](translations/build_ZH-CN.md).*
+# BitcoinMW - Build, Configuration, and Running
 
 ## Supported Platforms
 
-Longer term, most platforms will likely be supported to some extent.
-Grin's programming language `rust` has build targets for most platforms.
-
-What's working so far?
-
-* Linux x86\_64 and macOS [grin + mining + development]
-* Not Windows 10 yet [grin kind-of builds. No mining yet. Help wanted!]
+BitcoinMW's programming language `rust` has build targets for most platforms.
+The primary supported platforms are: MacOS, Linux, and Windows. The build pipeline continously checks specifically ubuntu-18.04, macos-latest, windows-latest. We support, but do not test other variants of these OSes at the moment.
 
 ## Requirements
 
 * rust: Install using rustup: https://rustup.rs
-  * Grin currently does not support a minimum version of Rust, it is recommended to build using the latest version.
+  * BitcoinMW currently does not support a minimum version of Rust, it is recommended to build using the latest version.
   * If rust is already installed, you can update to the latest version by running `rustup update`.
 * clang
 * ncurses and libs (ncurses, ncursesw5)
@@ -29,6 +22,12 @@ For Debian-based distributions (Debian, Ubuntu, Mint, etc), all in one line (exc
 
 ```sh
 apt install build-essential cmake git libgit2-dev clang libncurses5-dev libncursesw5-dev zlib1g-dev pkg-config libssl-dev llvm
+```
+
+On some versions of linux, the following is required:
+
+```sh
+sudo apt-get install -y libncursesw5
 ```
 
 For Mac:

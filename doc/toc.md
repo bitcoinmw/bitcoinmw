@@ -1,3 +1,5 @@
+NOTE: This and other documentation in this directory are left in tact for historical purposes. They will still reference 'grin' instead of 'bmw'. We will be supporting bmw specific documentation at https://github.com/bitcoinmw/docs/wiki.
+
 **Draft**
 
 This is a first attempt at a table of content for a more exhaustive technical

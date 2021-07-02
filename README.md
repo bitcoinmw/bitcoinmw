@@ -42,6 +42,8 @@ Andrew Poelstra for his related work and improvements.
 
 John Tromp for the Cuckoo Cycle proof of work.
 
+Gary Yu for Non-Interactive Transactions.
+
 J.K. Rowling for making it despite extraordinary adversity.
 
 ## Motto

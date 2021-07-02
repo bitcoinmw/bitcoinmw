@@ -40,7 +40,7 @@ Please consider putting one of the following prefixes in the title of your pull-
 - **test**:     Adding missing tests
 - **chore**:    Maintain. Changes to the build process or auxiliary tools/libraries/documentation
 
-For example: `fix: a panick on xxx when grin exiting`. Please don't worry if you can't find a suitable prefix, this's just optional, not mandatory.
+For example: `fix: a panick on xxx when bitcoinmw exiting`. Please don't worry if you can't find a suitable prefix, this's just optional, not mandatory.
 
 # BitcoinMW Style Guide
 

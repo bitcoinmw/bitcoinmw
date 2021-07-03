@@ -102,6 +102,6 @@ jobs:
         sudo apt-get update -yqq
         sudo apt-get install -yqq --no-install-recommends libncursesw5-dev libssl-dev sshpass
         cargo install cargo-tarpaulin
-	cargo tarpaulin --all
+        cargo tarpaulin --all
       displayName: Code Coverage
     - template: '.ci/test.yml'

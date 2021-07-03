@@ -87,7 +87,7 @@ jobs:
       displayName: Windows Install Dependencies
     - template: '.ci/test.yml'
     - template: '.ci/windows-release.yml'
- - job: tarpaulin
+- job: tarpaulin
   pool:
     vmImage: ubuntu-18.04
   strategy:

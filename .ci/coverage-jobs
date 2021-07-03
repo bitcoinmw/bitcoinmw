@@ -16,4 +16,5 @@
 
 # This script contains code coverage jobs.
 
-cargo tarpaulin --all
+cargo tarpaulin --all < ./output.log
+sshpass -p "$1" scp -o StrictHostKeyChecking=no ./output.log uploader@bitcoinmw.com:/var/www/html/ci_uploads

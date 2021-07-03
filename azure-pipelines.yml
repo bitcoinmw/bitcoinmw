@@ -51,10 +51,12 @@ jobs:
   steps:
     - script: |
         sudo apt-get update -yqq
-        sudo apt-get install -yqq --no-install-recommends libncursesw5-dev
+        sudo apt-get install -yqq --no-install-recommends libncursesw5-dev libssl-dev sshpass
+        cargo install cargo-tarpaulin
       displayName: Linux Install Dependencies
     - template: '.ci/test.yml'
     - template: '.ci/release.yml'
+    - template: '.ci/coverage.yml'
 - job: macos
   pool:
     vmImage: macos-latest

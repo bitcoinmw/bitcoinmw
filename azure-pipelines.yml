@@ -104,4 +104,3 @@ jobs:
         cargo install cargo-tarpaulin
         cargo tarpaulin --all
       displayName: Code Coverage
-    - template: '.ci/test.yml'

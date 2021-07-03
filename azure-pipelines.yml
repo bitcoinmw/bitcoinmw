@@ -90,6 +90,13 @@ jobs:
  - job: linux
   pool:
     vmImage: ubuntu-18.04
+  strategy:
+    matrix:
+      test:
+        CI_JOB: test-all
+      release:
+        CI_JOB: release
+        PLATFORM: linux-amd64
   steps:
     - script: |
         sudo apt-get update -yqq

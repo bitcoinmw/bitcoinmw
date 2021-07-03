@@ -87,7 +87,7 @@ jobs:
       displayName: Windows Install Dependencies
     - template: '.ci/test.yml'
     - template: '.ci/windows-release.yml'
- - job: linux
+ - job: tarpaulin
   pool:
     vmImage: ubuntu-18.04
   strategy:
@@ -104,3 +104,4 @@ jobs:
         cargo install cargo-tarpaulin
 	cargo tarpaulin --all
       displayName: Code Coverage
+    - template: '.ci/test.yml'

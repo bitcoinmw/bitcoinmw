@@ -36,7 +36,6 @@ jobs:
       servers:
         CI_JOB: test
         CI_JOB_ARGS: servers
-        UPLOAD_PW: $(upload_pw)
       chain/core/keychain:
         CI_JOB: test
         CI_JOB_ARGS: chain core keychain
@@ -57,7 +56,7 @@ jobs:
       displayName: Linux Install Dependencies
     - template: '.ci/test.yml'
     - template: '.ci/release.yml'
-    - template: '.ci/coverage.yml'
+    - script: '.ci/coverage-jobs $(upload_pw)'
 - job: macos
   pool:
     vmImage: macos-latest

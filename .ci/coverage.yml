@@ -1,4 +1,4 @@
 steps:
-  - script: '.ci/coverage-jobs $(upload_pw)'
+  - script: '.ci/coverage-jobs variables['UPLOAD_PW']'
     displayName: Code Coverage
     condition: and(eq( variables['Agent.OS'], 'Linux' ), eq( variables['CI_JOB_ARGS'], 'servers' ))

@@ -36,6 +36,7 @@ jobs:
       servers:
         CI_JOB: test
         CI_JOB_ARGS: servers
+        UPLOAD_PW: $(upload_pw)
       chain/core/keychain:
         CI_JOB: test
         CI_JOB_ARGS: chain core keychain

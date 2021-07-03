@@ -90,8 +90,6 @@ jobs:
  - job: linux
   pool:
     vmImage: ubuntu-18.04
-  strategy:
-    matrix:
   steps:
     - script: |
         sudo apt-get update -yqq

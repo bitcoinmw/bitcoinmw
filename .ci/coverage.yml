@@ -1,4 +1,4 @@
 steps:
   - script: '.ci/coverage-jobs'
-    displayName: Linux Cargo Test
+    displayName: Code Coverage
     condition: eq( variables['Agent.OS'], 'Linux' )

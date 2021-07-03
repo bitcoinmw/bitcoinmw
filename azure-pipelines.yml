@@ -94,9 +94,6 @@ jobs:
     matrix:
       test:
         CI_JOB: test-all
-      release:
-        CI_JOB: release
-        PLATFORM: linux-amd64
   steps:
     - script: |
         sudo apt-get update -yqq

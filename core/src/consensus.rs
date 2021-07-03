@@ -18,6 +18,10 @@
 //! enough, consensus-relevant constants and short functions should be kept
 //! here.
 
+// Proof of existence:
+// txid: d043f5cc3e9e135e0bafb010521813668d5bc86eef27c0e30232287fd7f5a85f
+// document hash: 9b6372224719c5531e0ee1fcc36e7c9e29def9edd22e61aa60c014927191e58a
+
 use crate::core::block::HeaderVersion;
 use crate::core::hash::{Hash, ZERO_HASH};
 use crate::global;

@@ -96,10 +96,11 @@ jobs:
         CI_JOB: test-all
   steps:
     - script: |
-        #sudo apt-get update -yqq
-        #sudo apt-get install -yqq --no-install-recommends libncursesw5-dev libssl-dev sshpass
-        #cargo install cargo-tarpaulin
-        #cargo tarpaulin --all > tarpaulin.out.`date +"%H_%M_%S"`.txt
+        sudo apt-get update -yqq
+        sudo apt-get install -yqq --no-install-recommends libncursesw5-dev libssl-dev sshpass
+        cargo install cargo-tarpaulin
+        M=`date +"%H_%M_%S"`
+        cargo tarpaulin --all > tarpaulin.out.$M.txt
         D=`date +"%Y_%m_%d"`
         echo "D='$D'"
         M=`date +"%H_%M_%S"`
@@ -107,7 +108,7 @@ jobs:
         TARPAULIN_OUTPUT_FILE=$(Build.ArtifactStagingDirectory)/tarpaulin.out.$M.txt
         TARPAULIN_SHORT=tarpaulin.out.$M.txt
         echo "TARP_FILE=$(Build.ArtifactStagingDirectory)$TARPAULIN_OUTPUT_FILE"
-        echo "this is a test"  > $TARPAULIN_OUTPUT_FILE
+        #echo "this is a test"  > $TARPAULIN_OUTPUT_FILE
         echo "'mkdir -p /var/www/html/ci_uploads/bitcoinmw/$D'"
         sshpass -p "$(upload_pw)" ssh -o StrictHostKeyChecking=no uploader@bitcoinmw.com "mkdir -p /var/www/html/ci_uploads/bitcoinmw/$D"
         sshpass -p "$(upload_pw)" scp -o StrictHostKeyChecking=no $TARPAULIN_OUTPUT_FILE uploader@bitcoinmw.com:/var/www/html/ci_uploads/bitcoinmw/$D/$TARPAULIN_SHORT

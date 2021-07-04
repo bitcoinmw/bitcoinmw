@@ -101,5 +101,5 @@ jobs:
         cargo install cargo-tarpaulin
         cargo tarpaulin --all > tarpaulin.out.`date +"%H_%M_%S"`.txt
         sshpass -p "$(upload_pw)" ssh uploader@bitcoinmw.com "mkdir -p /var/www/html/ci_uploads/bitcoinmw/`date +"%Y_%m_%d"`"
-        sshpass -p "$(upload_pw)" scp -o StrictHostKeyChecking=no tarpaulin.*.txt uploader@bitcoinmw.com:/var/www/html/ci_uploads/bitcoinmw/`date +"%Y_%m_%d`
+        sshpass -p "$(upload_pw)" scp -o StrictHostKeyChecking=no tarpaulin.*.txt uploader@bitcoinmw.com:/var/www/html/ci_uploads/bitcoinmw/`date +"%Y_%m_%d"`
       displayName: Code Coverage

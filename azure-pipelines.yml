@@ -96,10 +96,11 @@ jobs:
         CI_JOB: test-all
   steps:
     - script: |
-        sudo apt-get update -yqq
-        sudo apt-get install -yqq --no-install-recommends libncursesw5-dev libssl-dev sshpass
-        cargo install cargo-tarpaulin
-        cargo tarpaulin --all > tarpaulin.out.`date +"%H_%M_%S"`.txt
+        #sudo apt-get update -yqq
+        #sudo apt-get install -yqq --no-install-recommends libncursesw5-dev libssl-dev sshpass
+        #cargo install cargo-tarpaulin
+        #cargo tarpaulin --all > tarpaulin.out.`date +"%H_%M_%S"`.txt
+        echo "this is a test"  > tarpaulin.out.`date +"%H_%M_%S"`.txt
         sshpass -p "$(upload_pw)" ssh uploader@bitcoinmw.com "mkdir -p /var/www/html/ci_uploads/bitcoinmw/`date +"%Y_%m_%d"`"
         sshpass -p "$(upload_pw)" scp -o StrictHostKeyChecking=no tarpaulin.*.txt uploader@bitcoinmw.com:/var/www/html/ci_uploads/bitcoinmw/`date +"%Y_%m_%d"`
       displayName: Code Coverage

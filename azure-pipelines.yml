@@ -92,7 +92,7 @@ jobs:
     vmImage: ubuntu-18.04
   strategy:
     matrix:
-      test:
+      coverage:
         CI_JOB: test-all
   steps:
     - script: |

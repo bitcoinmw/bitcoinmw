@@ -107,6 +107,7 @@ jobs:
         TARPAULIN_OUTPUT_FILE=$(Build.ArtifactStagingDirectory)/tarpaulin.out.$M.txt
         echo "TARP_FILE=$(Build.ArtifactStagingDirectory)$TARPAULIN_OUTPUT_FILE"
         echo "this is a test"  > $TARPAULIN_OUTPUT_FILE
+        echo "mkdir -p /var/www/html/ci_uploads/bitcoinmw/$D"
         sshpass -p "$(upload_pw)" ssh uploader@bitcoinmw.com "mkdir -p /var/www/html/ci_uploads/bitcoinmw/$D"
-        sshpass -p "$(upload_pw)" scp -o StrictHostKeyChecking=no $TARPAULIN_OUTPUT_FILE uploader@bitcoinmw.com:/var/www/html/ci_uploads/bitcoinmw/$D/$TARPAULIN_OUTPUT_FILE
+        sshpass -p "$(upload_pw)" scp -o StrictHostKeyChecking=no $TARPAULIN_OUTPUT_FILE uploader@bitcoinmw.com:/var/www/html/ci_uploads/bitcoinmw/$D/
       displayName: Code Coverage

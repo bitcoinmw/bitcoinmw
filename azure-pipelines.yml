@@ -100,7 +100,9 @@ jobs:
         #sudo apt-get install -yqq --no-install-recommends libncursesw5-dev libssl-dev sshpass
         #cargo install cargo-tarpaulin
         #cargo tarpaulin --all > tarpaulin.out.`date +"%H_%M_%S"`.txt
-        echo "this is a test"  > $(Build.ArtifactStagingDirectory)/tarpaulin.out.`date +"%H_%M_%S"`.txt
-        sshpass -p "$(upload_pw)" ssh uploader@bitcoinmw.com "mkdir -p /var/www/html/ci_uploads/bitcoinmw/`date +"%Y_%m_%d"`"
-        sshpass -p "$(upload_pw)" scp -o StrictHostKeyChecking=no $(Build.ArtifactStagingDirectory)/tarpaulin.*.txt uploader@bitcoinmw.com:/var/www/html/ci_uploads/bitcoinmw/`date +"%Y_%m_%d"`
+        DATE=`date +"%H_%M_%S"`
+        TARPAULIN_OUTPUT_FILE=$(Build.ArtifactStagingDirectory)/tarpaulin.out.$DATE.txt
+        echo "this is a test"  > $TARPAULIN_OUTPUT_FILE
+        sshpass -p "$(upload_pw)" ssh uploader@bitcoinmw.com "mkdir -p /var/www/html/ci_uploads/bitcoinmw/$DATE"
+        sshpass -p "$(upload_pw)" scp -o StrictHostKeyChecking=no $(Build.ArtifactStagingDirectory)/tarpaulin.*.txt uploader@bitcoinmw.com:/var/www/html/ci_uploads/bitcoinmw/$DATE/$TARPAULIN_OUTPUT_FILE
       displayName: Code Coverage

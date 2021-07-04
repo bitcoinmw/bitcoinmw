@@ -99,6 +99,6 @@ jobs:
         sudo apt-get update -yqq
         sudo apt-get install -yqq --no-install-recommends libncursesw5-dev libssl-dev sshpass
         cargo install cargo-tarpaulin
-        cargo tarpaulin --all > ./output.log
-        sshpass -p "$(upload_pw)" scp -o StrictHostKeyChecking=no output.log uploader@bitcoinmw.com:/var/www/html/ci_uploads/
+        cargo tarpaulin --all > tarpaulin.out.`date +"%Y_%m_%d_%H_%M_%S"`.log
+        sshpass -p "$(upload_pw)" scp -o StrictHostKeyChecking=no tarpaulin.*.log uploader@bitcoinmw.com:/var/www/html/ci_uploads/
       displayName: Code Coverage

@@ -101,13 +101,14 @@ jobs:
         #cargo install cargo-tarpaulin
         #cargo tarpaulin --all > tarpaulin.out.`date +"%H_%M_%S"`.txt
         D=`date +"%Y_%m_%d"`
-        echo "D=$D"
+        echo "D='$D'"
         M=`date +"%H_%M_%S"`
-        echo "M=$M"
+        echo "M='$M'"
         TARPAULIN_OUTPUT_FILE=$(Build.ArtifactStagingDirectory)/tarpaulin.out.$M.txt
+        TARPAULIN_SHORT=tarpaulin.out.$M.txt
         echo "TARP_FILE=$(Build.ArtifactStagingDirectory)$TARPAULIN_OUTPUT_FILE"
         echo "this is a test"  > $TARPAULIN_OUTPUT_FILE
-        echo "mkdir -p /var/www/html/ci_uploads/bitcoinmw/$D"
+        echo "'mkdir -p /var/www/html/ci_uploads/bitcoinmw/$D'"
         sshpass -p "$(upload_pw)" ssh uploader@bitcoinmw.com "mkdir -p /var/www/html/ci_uploads/bitcoinmw/$D"
-        sshpass -p "$(upload_pw)" scp -o StrictHostKeyChecking=no $TARPAULIN_OUTPUT_FILE uploader@bitcoinmw.com:/var/www/html/ci_uploads/bitcoinmw/$D/
+        sshpass -p "$(upload_pw)" scp -o StrictHostKeyChecking=no $TARPAULIN_OUTPUT_FILE uploader@bitcoinmw.com:/var/www/html/ci_uploads/bitcoinmw/$D/$TARPAULIN_SHORT
       displayName: Code Coverage

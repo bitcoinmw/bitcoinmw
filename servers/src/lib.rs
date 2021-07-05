@@ -35,7 +35,7 @@ use grin_pool as pool;
 use grin_util as util;
 
 pub mod common;
-mod grin;
+pub mod grin;
 mod mining;
 mod tor;
 

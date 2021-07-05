@@ -5,7 +5,7 @@
 
 # Bitcoin MW
 
-Bitcoin MW is an implementation of the Mimblewimble protocol that maintains the Bitcoin (BTC) UTXO set with no pre-mine, dev fund, ICO or dev tax (i.e. 100% fair launch). Thus, it is a hard fork of Bitcoin. The Bitcoin UTXO set is installed into an entirely new application which adds privacy, improved scaling, and fungibility characteristics. Whenever there is a fork of Bitcoin, which side of the fork is "Bitcoin" is decided solely in the order book. As developers, we do not make that decision. We only choose which code to maintain. We believe this fork is worthy of our attention and leave it up to the holders of Bitcoin to decide where to assign value.
+Bitcoin MW is an implementation of the Mimblewimble protocol that maintains the Bitcoin (BTC) UTXO set with no pre-mine, dev fund, ICO or dev tax (i.e. 100% fair launch). Thus, it is a hard fork of Bitcoin. The Bitcoin UTXO set is installed into an entirely new application which adds privacy, improved scaling, and fungibility characteristics. Whenever there is a fork of Bitcoin, which side of the fork is "Bitcoin" is decided solely in the order book. As developers, we do not make that decision. We only choose which code to maintain. We believe this fork is worthy of our attention and leave it up to the holders of Bitcoin to decide where to assign value. Many characteristics are still undefined but the following constitutes a first set of choices: 
 
   * Clean and minimal implementation, and aiming to stay as such.
   * Follows the Mimblewimble protocol, which provides hidden amounts and scaling advantages.

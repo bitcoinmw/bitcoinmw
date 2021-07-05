@@ -28,6 +28,7 @@ use crate::util::RwLock;
 use crate::util::StopState;
 use bmw_utxo::utxo_data::UtxoData;
 
+/// main entry point, run and sync
 pub fn run_sync(
 	sync_state: Arc<SyncState>,
 	peers: Arc<p2p::Peers>,

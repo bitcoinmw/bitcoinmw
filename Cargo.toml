@@ -1,6 +1,6 @@
 [package]
 name = "bmw"
-version = "0.0.1"
+version = "0.0.2-beta.1"
 authors = ["BitcoinMW Developers <bitcoinmw@protonmail.com>"]
 description = "Simple, private and scalable cryptocurrency implementation based on the Mimblewimble chain format with installation of the Bitcoin UTXO set."
 license = "Apache-2.0"
@@ -32,15 +32,15 @@ term = "0.6"
 failure = "0.1"
 failure_derive = "0.1"
 
-grin_api = { path = "./api", version = "0.0.1" }
-grin_config = { path = "./config", version = "0.0.1" }
-grin_chain = { path = "./chain", version = "0.0.1" }
-grin_core = { path = "./core", version = "0.0.1" }
-grin_keychain = { path = "./keychain", version = "0.0.1" }
-grin_p2p = { path = "./p2p", version = "0.0.1" }
-grin_servers = { path = "./servers", version = "0.0.1" }
-grin_util = { path = "./util", version = "0.0.1" }
-bmw_utxo = { path = "./utxo", version = "0.0.1" }
+grin_api = { path = "./api", version = "0.0.2-beta.1" }
+grin_config = { path = "./config", version = "0.0.2-beta.1" }
+grin_chain = { path = "./chain", version = "0.0.2-beta.1" }
+grin_core = { path = "./core", version = "0.0.2-beta.1" }
+grin_keychain = { path = "./keychain", version = "0.0.2-beta.1" }
+grin_p2p = { path = "./p2p", version = "0.0.2-beta.1" }
+grin_servers = { path = "./servers", version = "0.0.2-beta.1" }
+grin_util = { path = "./util", version = "0.0.2-beta.1" }
+bmw_utxo = { path = "./utxo", version = "0.0.2-beta.1" }
 
 
 [dependencies.cursive]
@@ -52,5 +52,5 @@ features = ["pancurses-backend"]
 built = { version = "0.4", features = ["git2"]}
 
 [dev-dependencies]
-grin_chain = { path = "./chain", version = "0.0.1" }
-grin_store = { path = "./store", version = "0.0.1" }
+grin_chain = { path = "./chain", version = "0.0.2-beta.1" }
+grin_store = { path = "./store", version = "0.0.2-beta.1" }

@@ -1,6 +1,6 @@
 [package]
 name = "bmw_utxo"
-version = "0.0.1"
+version = "0.0.2-beta.1"
 authors = ["BitcoinMW Developers <bitcoinmw@protonmail.com>"]
 description = "Chain implementation for grin, a simple, private and scalable cryptocurrency implementation based on the Mimblewimble chain format."
 license = "Apache-2.0"
@@ -20,6 +20,6 @@ bitcoin_hashes = { version = "0.9.1" }
 bitvec = { version = "0.20.1" }
 bech32 = { version = "0.7.2" }
 log = { version = "0.4" }
-grin_util = { path = "../util", version = "0.0.1" }
+grin_util = { path = "../util", version = "0.0.2-beta.1" }
 
 [dev-dependencies]

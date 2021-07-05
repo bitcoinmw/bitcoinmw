@@ -50,6 +50,7 @@ const TESTNET_DNS_SEEDS: &[&str] = &[
 	"rjmyxfmbevz43rdaqskrfkfhxduqfcaifwnqaezbe7ubkxz3aj6kqoqd.onion",
 ];
 
+/// connect to the p2p network and monitor
 pub fn connect_and_monitor(
 	p2p_server: Arc<p2p::Server>,
 	seed_list: Box<dyn Fn() -> Vec<PeerAddr> + Send>,
@@ -369,6 +370,7 @@ fn listen_for_addrs(
 	}
 }
 
+/// return the default dns seeds
 pub fn default_dns_seeds() -> Box<dyn Fn() -> Vec<PeerAddr> + Send> {
 	Box::new(|| {
 		let net_seeds = if global::is_testnet() {

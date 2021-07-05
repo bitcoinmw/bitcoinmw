@@ -14,6 +14,7 @@
 
 //! Grin P2P / API server
 
+/// Dandelion monitor module
 pub mod dandelion_monitor;
 pub mod seed;
 pub mod server;

@@ -293,7 +293,7 @@ dependencies = [
 
 [[package]]
 name = "bmw"
-version = "0.0.1"
+version = "0.0.2-beta.1"
 dependencies = [
  "blake2-rfc",
  "bmw_utxo",
@@ -322,7 +322,7 @@ dependencies = [
 
 [[package]]
 name = "bmw_utxo"
-version = "0.0.1"
+version = "0.0.2-beta.1"
 dependencies = [
  "bech32",
  "bitcoin_hashes",
@@ -1216,7 +1216,7 @@ checksum = "9b919933a397b79c37e33b77bb2aa3dc8eb6e165ad809e58ff75bc7db2e34574"
 
 [[package]]
 name = "grin_api"
-version = "0.0.1"
+version = "0.0.2-beta.1"
 dependencies = [
  "bmw_utxo",
  "bytes",
@@ -1249,7 +1249,7 @@ dependencies = [
 
 [[package]]
 name = "grin_chain"
-version = "0.0.1"
+version = "0.0.2-beta.1"
 dependencies = [
  "base64 0.12.1",
  "bit-vec",
@@ -1279,7 +1279,7 @@ dependencies = [
 
 [[package]]
 name = "grin_config"
-version = "0.0.1"
+version = "0.0.2-beta.1"
 dependencies = [
  "dirs 2.0.2",
  "grin_core",
@@ -1295,7 +1295,7 @@ dependencies = [
 
 [[package]]
 name = "grin_core"
-version = "0.0.1"
+version = "0.0.2-beta.1"
 dependencies = [
  "base64 0.12.1",
  "bitcoin 0.26.0 (git+https://github.com/bitcoinmw/rust-bitcoin)",
@@ -1327,7 +1327,7 @@ dependencies = [
 
 [[package]]
 name = "grin_keychain"
-version = "0.0.1"
+version = "0.0.2-beta.1"
 dependencies = [
  "blake2-rfc",
  "byteorder",
@@ -1348,7 +1348,7 @@ dependencies = [
 
 [[package]]
 name = "grin_p2p"
-version = "0.0.1"
+version = "0.0.2-beta.1"
 dependencies = [
  "bitflags 1.2.1",
  "bmw_utxo",
@@ -1373,7 +1373,7 @@ dependencies = [
 
 [[package]]
 name = "grin_pool"
-version = "0.0.1"
+version = "0.0.2-beta.1"
 dependencies = [
  "blake2-rfc",
  "bmw_utxo",
@@ -1407,7 +1407,7 @@ dependencies = [
 
 [[package]]
 name = "grin_servers"
-version = "0.0.1"
+version = "0.0.2-beta.1"
 dependencies = [
  "bmw_utxo",
  "chrono",
@@ -1445,7 +1445,7 @@ dependencies = [
 
 [[package]]
 name = "grin_store"
-version = "0.0.1"
+version = "0.0.2-beta.1"
 dependencies = [
  "byteorder",
  "chrono",
@@ -1468,7 +1468,7 @@ dependencies = [
 
 [[package]]
 name = "grin_util"
-version = "0.0.1"
+version = "0.0.2-beta.1"
 dependencies = [
  "backtrace",
  "base64 0.12.1",

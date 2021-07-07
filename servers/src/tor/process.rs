@@ -221,6 +221,10 @@ impl TorProcess {
 			let stdout_timeout_tx = stdout_tx.clone();
 
 			if start_tor {
+				{
+					let mut status = status.write().unwrap();
+					status.last = Self::timenow();
+				}
 				let mut tor = Command::new(&self.tor_cmd);
 
 				if let Some(ref d) = self.working_dir {
@@ -372,10 +376,8 @@ impl TorProcess {
 									return Err(Error::Tor(format!("{:?}", status), warnings));
 								}
 								let mut status = status.unwrap();
-								if perc > status.status {
-									status.status = perc;
-									status.last = Self::timenow();
-								}
+								status.status = perc;
+								status.last = Self::timenow();
 							}
 							if perc >= completion_perc {
 								break;

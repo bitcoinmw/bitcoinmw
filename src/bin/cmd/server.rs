@@ -54,6 +54,7 @@ fn start_server_tui(config: servers::ServerConfig, logs_rx: Option<mpsc::Receive
 				});
 				controller.run(serv);
 			},
+			None,
 		)
 		.unwrap();
 	} else {
@@ -74,6 +75,7 @@ fn start_server_tui(config: servers::ServerConfig, logs_rx: Option<mpsc::Receive
 				warn!("Received SIGINT (Ctrl+C) or SIGTERM (kill).");
 				serv.stop();
 			},
+			None,
 		)
 		.unwrap();
 	}

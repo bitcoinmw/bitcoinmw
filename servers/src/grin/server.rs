@@ -98,7 +98,7 @@ pub struct Server {
 	dandelion_thread: JoinHandle<()>,
 	utxo_data: Arc<RwLock<UtxoData>>,
 	/// Used to keep TorProcess in scope.
-	_tor_process: Option<TorProcess>,
+	_tor_process: Option<Arc<RwLock<TorProcess>>>,
 }
 
 impl Server {
@@ -109,6 +109,7 @@ impl Server {
 		config: ServerConfig,
 		logs_rx: Option<mpsc::Receiver<LogEntry>>,
 		mut info_callback: F,
+		stop_state: Option<Arc<StopState>>,
 	) -> Result<(), Error>
 	where
 		F: FnMut(Server, Option<mpsc::Receiver<LogEntry>>),
@@ -116,7 +117,7 @@ impl Server {
 		let mining_config = config.stratum_mining_config.clone();
 		let enable_test_miner = config.run_test_miner;
 		let test_miner_wallet_url = config.test_miner_wallet_url.clone();
-		let serv = Server::new(config)?;
+		let serv = Server::new(config, stop_state)?;
 
 		if let Some(c) = mining_config {
 			let enable_stratum_server = c.enable_stratum_server;
@@ -200,7 +201,7 @@ Wrong network! {:?} != {:?}",
 	}
 
 	/// Instantiates a new server associated with the provided future reactor.
-	pub fn new(config: ServerConfig) -> Result<Server, Error> {
+	pub fn new(config: ServerConfig, stop_state: Option<Arc<StopState>>) -> Result<Server, Error> {
 		// Obtain our lock_file or fail immediately with an error.
 		let lock_file = Server::one_grin_at_a_time(&config)?;
 
@@ -213,7 +214,11 @@ Wrong network! {:?} != {:?}",
 			Some(b) => b,
 		};
 
-		let stop_state = Arc::new(StopState::new());
+		let stop_state = if stop_state.is_some() {
+			stop_state.unwrap()
+		} else {
+			Arc::new(StopState::new())
+		};
 
 		// Shared cache for verification results.
 		// We cache rangeproof verification and kernel signature verification.
@@ -490,7 +495,7 @@ Wrong network! {:?} != {:?}",
 		api_addr: &str,
 		tor_base: Option<&str>,
 		socks_port: u16,
-	) -> Result<(String, TorProcess), Error> {
+	) -> Result<(String, Arc<RwLock<TorProcess>>), Error> {
 		let mut process = tor_process::TorProcess::new();
 		let tor_dir = if tor_base.is_some() {
 			format!("{}/tor/listener", tor_base.unwrap())
@@ -566,7 +571,7 @@ Wrong network! {:?} != {:?}",
 
 		match res {
 			Err(e) => Err(ErrorKind::Configuration(e.to_string()).into()),
-			Ok(_) => Ok((onion_address.to_string(), process)),
+			Ok(_) => Ok((onion_address.to_string(), Arc::new(RwLock::new(process)))),
 		}
 	}
 
@@ -589,7 +594,7 @@ Wrong network! {:?} != {:?}",
 	fn setup_tor(
 		config: ServerConfig,
 		stop_state: Arc<StopState>,
-	) -> Result<(String, u16, Option<TorProcess>), Error> {
+	) -> Result<(String, u16, Option<Arc<RwLock<TorProcess>>>), Error> {
 		let o = config.p2p_config.onion_address.clone();
 
 		if o.is_some() && !config.p2p_config.tor_external {
@@ -610,8 +615,8 @@ Wrong network! {:?} != {:?}",
 		} else {
 			// setup internal tor here
 			let (input, output): (
-				Sender<(Option<TorProcess>, Option<String>)>,
-				Receiver<(Option<TorProcess>, Option<String>)>,
+				Sender<(Option<Arc<RwLock<TorProcess>>>, Option<String>)>,
+				Receiver<(Option<Arc<RwLock<TorProcess>>>, Option<String>)>,
 			) = mpsc::channel();
 
 			let cloned_config = config.clone();
@@ -631,11 +636,16 @@ Wrong network! {:?} != {:?}",
 					match res {
 						Ok((onion_address, tp)) => {
 							input
-								.send((Some(tp), Some(format!("{}.onion", onion_address.clone()))))
+								.send((
+									Some(tp.clone()),
+									Some(format!("{}.onion", onion_address.clone())),
+								))
 								.unwrap();
 							loop {
 								std::thread::sleep(std::time::Duration::from_millis(10));
 								if stop_state.is_stopped() {
+									let mut tp = tp.write();
+									let _ = tp.kill();
 									break;
 								}
 							}

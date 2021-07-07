@@ -59,7 +59,11 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, MAIN_SEPARATOR};
 use std::process::{Child, ChildStdout, Command, Stdio};
 use std::sync::mpsc::channel;
+use std::sync::Arc;
+use std::sync::RwLock;
 use std::thread;
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
 use sysinfo::{Process, ProcessExt, Signal};
 
 #[cfg(windows)]
@@ -128,6 +132,12 @@ pub struct TorProcess {
 	working_dir: Option<String>,
 	pub stdout: Option<BufReader<ChildStdout>>,
 	pub process: Option<Child>,
+}
+
+#[derive(Debug)]
+struct TorStartStatus {
+	last: u128,
+	status: u8,
 }
 
 impl TorProcess {
@@ -200,93 +210,130 @@ impl TorProcess {
 	// The tor process will have its stdout piped, so if the stdout lines are not consumed they
 	// will keep accumulating over time, increasing the consumed memory.
 	pub fn launch(&mut self) -> Result<&mut Self, Error> {
-		let mut tor = Command::new(&self.tor_cmd);
+		let status = Arc::new(RwLock::new(TorStartStatus {
+			status: 0,
+			last: Self::timenow(),
+		}));
+		let mut start_tor = true;
 
-		if let Some(ref d) = self.working_dir {
-			tor.current_dir(&d);
-			let pid_file_name = format!("{}{}pid", d, MAIN_SEPARATOR);
-			// kill off PID if its already running
-			if Path::new(&pid_file_name).exists() {
-				let pid = fs::read_to_string(&pid_file_name).map_err(|err| {
-					Error::IO(
-						format!("Unable to read from pid file {}", pid_file_name),
-						err,
-					)
-				})?;
-				let pid = pid.parse::<i32>().map_err(|err| {
-					Error::PID(format!("Pid value {} is invalid, {:?}", pid, err))
-				})?;
-				let process = get_process(pid);
-				let _ = process.kill(Signal::Kill);
-			}
-		}
-		if let Some(ref torrc_path) = self.torrc_path {
-			tor.args(&vec!["-f", torrc_path]);
-		}
-		let mut tor_process = tor
-			.args(&self.args)
-			.stdin(Stdio::piped())
-			.stdout(Stdio::piped())
-			.stderr(Stdio::null())
-			.spawn()
-			.map_err(|err| {
-				let msg = format!("Tor executable (`{}`) not found. Please ensure Tor is installed and on the path: {:?}", err, Self::get_tor_cmd());
-				Error::Process(msg)
-			})?;
+		loop {
+			let (stdout_tx, stdout_rx) = channel();
+			let stdout_timeout_tx = stdout_tx.clone();
 
-		if let Some(ref d) = self.working_dir {
-			// split out the process id, so if we don't exit cleanly
-			// we can take it down on the next run
-			let pid_file_name = format!("{}{}pid", d, MAIN_SEPARATOR);
-			let mut file = File::create(pid_file_name.clone()).map_err(|err| {
-				Error::IO(format!("Unable to create pid file {}", pid_file_name), err)
-			})?;
-			file.write_all(format!("{}", tor_process.id()).as_bytes())
+			if start_tor {
+				let mut tor = Command::new(&self.tor_cmd);
+
+				if let Some(ref d) = self.working_dir {
+					tor.current_dir(&d);
+					let pid_file_name = format!("{}{}pid", d, MAIN_SEPARATOR);
+					// kill off PID if its already running
+					if Path::new(&pid_file_name).exists() {
+						let pid = fs::read_to_string(&pid_file_name).map_err(|err| {
+							Error::IO(
+								format!("Unable to read from pid file {}", pid_file_name),
+								err,
+							)
+						})?;
+						let pid = pid.parse::<i32>().map_err(|err| {
+							Error::PID(format!("Pid value {} is invalid, {:?}", pid, err))
+						})?;
+						let process = get_process(pid);
+						let _ = process.kill(Signal::Kill);
+					}
+				}
+				if let Some(ref torrc_path) = self.torrc_path {
+					tor.args(&vec!["-f", torrc_path]);
+				}
+				let mut tor_process = tor
+				.args(&self.args)
+				.stdin(Stdio::piped())
+				.stdout(Stdio::piped())
+				.stderr(Stdio::null())
+				.spawn()
 				.map_err(|err| {
-					Error::IO(format!("Unable to update pid file {}", pid_file_name), err)
+					let msg = format!("Tor executable (`{}`) not found. Please ensure Tor is installed and on the path: {:?}", err, Self::get_tor_cmd());
+					Error::Process(msg)
 				})?;
+
+				if let Some(ref d) = self.working_dir {
+					// split out the process id, so if we don't exit cleanly
+					// we can take it down on the next run
+					let pid_file_name = format!("{}{}pid", d, MAIN_SEPARATOR);
+					let mut file = File::create(pid_file_name.clone()).map_err(|err| {
+						Error::IO(format!("Unable to create pid file {}", pid_file_name), err)
+					})?;
+					file.write_all(format!("{}", tor_process.id()).as_bytes())
+						.map_err(|err| {
+							Error::IO(format!("Unable to update pid file {}", pid_file_name), err)
+						})?;
+				}
+
+				let stdout = BufReader::new(tor_process.stdout.take().unwrap());
+
+				self.process = Some(tor_process);
+				let completion_percent = self.completion_percent;
+
+				let status_clone = status.clone();
+				thread::spawn(move || -> Result<(), std::io::Error> {
+					let stdout =
+						Self::parse_tor_stdout(stdout, completion_percent, status_clone.clone());
+					if stdout.is_err() {
+						error!("problem with parsing stdout (tor): {:?}", stdout);
+					}
+					// now we start reading again forever so buffers don't fill
+					let _ = Self::parse_tor_stdout(stdout.unwrap(), u8::max_value(), status_clone);
+					loop {
+						std::thread::park();
+					}
+				});
+				start_tor = false;
+			}
+
+			let timer = timer::Timer::new();
+			let _guard =
+				timer.schedule_with_delay(chrono::Duration::milliseconds(100 as i64), move || {
+					stdout_timeout_tx.send(Err(Error::Timeout)).unwrap_or(());
+				});
+
+			match stdout_rx.recv()? {
+				Ok(()) => {
+					return Ok(self);
+				}
+				Err(_) => {
+					{
+						let status = status.write();
+						if status.is_err() {
+							return Err(Error::Timeout);
+						}
+						let mut status = status.unwrap();
+						if status.status == self.completion_percent {
+							return Ok(self);
+						}
+						let delay = Self::timenow() - status.last;
+						if delay > 5_000 {
+							status.status = 0;
+							self.kill().unwrap_or(());
+							start_tor = true;
+						}
+					}
+					continue;
+				}
+			}
 		}
+	}
 
-		let stdout = BufReader::new(tor_process.stdout.take().unwrap());
-
-		self.process = Some(tor_process);
-		let completion_percent = self.completion_percent;
-
-		let (stdout_tx, stdout_rx) = channel();
-		let stdout_timeout_tx = stdout_tx.clone();
-
-		let timer = timer::Timer::new();
-		let _guard =
-			timer.schedule_with_delay(chrono::Duration::seconds(self.timeout as i64), move || {
-				stdout_timeout_tx.send(Err(Error::Timeout)).unwrap_or(());
-			});
-		thread::spawn(move || -> Result<(), std::io::Error> {
-			let stdout = Self::parse_tor_stdout(stdout, completion_percent);
-			if stdout.is_ok() {
-				stdout_tx.send(Ok(())).unwrap_or(());
-			} else {
-				stdout_tx.send(Err(Error::ProcessNotStarted)).unwrap();
-			}
-			// now we start reading again forever so buffers don't fill
-			let _ = Self::parse_tor_stdout(stdout.unwrap(), u8::max_value());
-
-			loop {
-				std::thread::park();
-			}
-		});
-
-		match stdout_rx.recv()? {
-			Ok(()) => Ok(self),
-			Err(err) => {
-				self.kill().unwrap_or(());
-				Err(err)
-			}
-		}
+	fn timenow() -> u128 {
+		let start = SystemTime::now();
+		let since_the_epoch = start
+			.duration_since(UNIX_EPOCH)
+			.expect("Time went backwards");
+		since_the_epoch.as_millis()
 	}
 
 	fn parse_tor_stdout(
 		mut stdout: BufReader<ChildStdout>,
 		completion_perc: u8,
+		status: Arc<RwLock<TorStartStatus>>,
 	) -> Result<BufReader<ChildStdout>, Error> {
 		let re_bootstrap = Regex::new(r"^\[notice\] Bootstrapped (?P<perc>[0-9]+)%(.*): ")
 			.map_err(|err| Error::Regex("Failed to parse Tor output".to_string(), err))?;
@@ -317,6 +364,19 @@ impl TorProcess {
 								.and_then(|c| c.name("perc"))
 								.and_then(|pc| pc.as_str().parse::<u8>().ok())
 								.ok_or_else(|| Error::InvalidBootstrapLine(line.to_string()))?;
+
+							{
+								// update status
+								let status = status.write();
+								if status.is_err() {
+									return Err(Error::Tor(format!("{:?}", status), warnings));
+								}
+								let mut status = status.unwrap();
+								if perc > status.status {
+									status.status = perc;
+									status.last = Self::timenow();
+								}
+							}
 							if perc >= completion_perc {
 								break;
 							}

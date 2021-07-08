@@ -94,7 +94,7 @@ pub struct Server {
 	/// Maintain a lock_file so we do not run multiple Grin nodes from same dir.
 	lock_file: Arc<File>,
 	connect_thread: Option<JoinHandle<()>>,
-	sync_thread: JoinHandle<()>,
+	sync_thread: Option<JoinHandle<()>>,
 	dandelion_thread: JoinHandle<()>,
 	utxo_data: Arc<RwLock<UtxoData>>,
 	/// Used to keep TorProcess in scope.
@@ -406,19 +406,25 @@ Wrong network! {:?} != {:?}",
 			)?);
 		}
 
-		// Defaults to None (optional) in config file.
-		// This translates to false here so we do not skip by default.
-		let skip_sync_wait = config.skip_sync_wait.unwrap_or(false);
-		sync_state.update(SyncStatus::AwaitingPeers(!skip_sync_wait));
+		let sync_thread = if config.skip_sync.unwrap_or(false) {
+			sync_state.update(SyncStatus::NoSync);
+			None
+		} else {
+			// Defaults to None (optional) in config file.
+			// This translates to false here so we do not skip by default.
+			let skip_sync_wait = config.skip_sync_wait.unwrap_or(false);
+			sync_state.update(SyncStatus::AwaitingPeers(!skip_sync_wait));
 
-		let sync_thread = sync::run_sync(
-			sync_state.clone(),
-			p2p_server.peers.clone(),
-			shared_chain.clone(),
-			stop_state.clone(),
-			utxo_data.clone(),
-			binary_location,
-		)?;
+			let sync_thread = sync::run_sync(
+				sync_state.clone(),
+				p2p_server.peers.clone(),
+				shared_chain.clone(),
+				stop_state.clone(),
+				utxo_data.clone(),
+				binary_location,
+			)?;
+			Some(sync_thread)
+		};
 
 		let p2p_inner = p2p_server.clone();
 		let _ = thread::Builder::new()
@@ -895,9 +901,11 @@ Wrong network! {:?} != {:?}",
 				info!("No active connect_and_monitor thread")
 			}
 
-			match self.sync_thread.join() {
-				Err(e) => error!("failed to join to sync thread: {:?}", e),
-				Ok(_) => info!("sync thread stopped"),
+			if self.sync_thread.is_some() {
+				match self.sync_thread.unwrap().join() {
+					Err(e) => error!("failed to join to sync thread: {:?}", e),
+					Ok(_) => info!("sync thread stopped"),
+				}
 			}
 
 			match self.dandelion_thread.join() {

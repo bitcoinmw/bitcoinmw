@@ -138,6 +138,14 @@ fn comments() -> HashMap<String, String> {
 	);
 
 	retval.insert(
+		"skip_sync".to_string(),
+		"
+#skip syncing altogether
+"
+		.to_string(),
+	);
+
+	retval.insert(
 		"run_tui".to_string(),
 		"
 #whether to run the ncurses TUI (Ncurses must be installed)

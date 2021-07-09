@@ -22,7 +22,6 @@ use grin_util as util;
 use self::chain_test_helper::{build_block, clean_output_dir, genesis_block, init_chain};
 use crate::chain::{pipe, Options};
 use crate::core::core::verifier_cache::LruVerifierCache;
-use crate::core::core::{block, transaction};
 use crate::core::core::{FeeFields, KernelFeatures, Weighting};
 use crate::core::libtx::{build, ProofBuilder};
 use crate::core::{consensus, global};
@@ -122,16 +121,18 @@ fn process_block_cut_through() -> Result<(), chain::Error> {
 
 	// Transaction is invalid due to cut-through.
 	let height = 7;
-	assert_eq!(
-		tx.validate(
-			Weighting::AsTransaction,
-			verifier_cache.clone(),
-			height,
-			None,
-			None,
-		),
-		Err(transaction::Error::CutThrough),
-	);
+	match tx.validate(
+		Weighting::AsTransaction,
+		verifier_cache.clone(),
+		height,
+		None,
+		None,
+	) {
+		Ok(_) => panic!("should not be valid"),
+		Err(e) => {
+			assert_eq!(format!("{:?}", e).contains("CutThrough"), true);
+		}
+	}
 
 	// Transaction will not validate against the chain (utxo).
 	assert_eq!(
@@ -155,8 +156,12 @@ fn process_block_cut_through() -> Result<(), chain::Error> {
 	// The block is invalid due to cut-through.
 	let prev = chain.head_header()?;
 	assert_eq!(
-		block.validate(&prev.total_kernel_offset(), verifier_cache, None),
-		Err(block::Error::Transaction(transaction::Error::CutThrough))
+		format!(
+			"{:?}",
+			block.validate(&prev.total_kernel_offset(), verifier_cache.clone(), None)
+		)
+		.contains("CutThrough"),
+		true
 	);
 
 	// The block processing pipeline will refuse to accept the block due to "duplicate commitment".
@@ -176,12 +181,8 @@ fn process_block_cut_through() -> Result<(), chain::Error> {
 
 		let mut ctx = chain.new_ctx(Options::NONE, batch, &mut header_pmmr, &mut txhashset)?;
 		let res = pipe::process_block(&block, &mut ctx, None).map_err(|e| e.kind());
-		assert_eq!(
-			res,
-			Err(chain::ErrorKind::InvalidBlockProof(
-				block::Error::Transaction(transaction::Error::CutThrough)
-			))
-		);
+		assert_eq!(res.is_err(), true);
+		assert_eq!(format!("{:?}", res).contains("CutThrough"), true);
 	}
 
 	clean_output_dir(chain_dir);

@@ -68,7 +68,7 @@ pub enum Error {
 	/// There are multiple notarizations in this block which is not allowed.
 	MultipleNotarizations,
 	/// Underlying tx related error
-	Transaction(transaction::Error),
+	Transaction(String),
 	/// Underlying Secp256k1 error (signature validation or invalid public key
 	/// typically)
 	Secp(secp::Error),
@@ -95,7 +95,7 @@ impl From<committed::Error> for Error {
 
 impl From<transaction::Error> for Error {
 	fn from(e: transaction::Error) -> Error {
-		Error::Transaction(e)
+		Error::Transaction(format!("{:?}", e))
 	}
 }
 
@@ -968,7 +968,7 @@ impl Readable for UntrustedBlock {
 		// An example of this would be reading a block
 		// that exceeded the allowed number of inputs.
 		body.validate_read(Weighting::AsBlock).map_err(|e| {
-			error!("read validation error: {}", e);
+			error!("read validation error: {:?}", e);
 			ser::Error::CorruptedData
 		})?;
 		let block = Block {

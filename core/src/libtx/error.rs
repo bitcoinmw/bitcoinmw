@@ -37,8 +37,8 @@ pub enum ErrorKind {
 	#[fail(display = "Keychain Error")]
 	Keychain(keychain::Error),
 	/// Transaction error
-	#[fail(display = "Transaction Error")]
-	Transaction(transaction::Error),
+	#[fail(display = "Transaction Error: {}", _0)]
+	Transaction(String),
 	/// Signature error
 	#[fail(display = "Signature Error")]
 	Signature(String),
@@ -115,7 +115,7 @@ impl From<keychain::Error> for Error {
 impl From<transaction::Error> for Error {
 	fn from(error: transaction::Error) -> Error {
 		Error {
-			inner: Context::new(ErrorKind::Transaction(error)),
+			inner: Context::new(ErrorKind::Transaction(format!("{:?}", error))),
 		}
 	}
 }

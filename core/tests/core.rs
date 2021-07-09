@@ -304,8 +304,9 @@ fn build_two_half_kernels() {
 			height,
 			None,
 			None
-		),
-		Ok(()),
+		)
+		.is_ok(),
+		true,
 	);
 
 	assert_eq!(
@@ -315,8 +316,9 @@ fn build_two_half_kernels() {
 			height,
 			None,
 			None
-		),
-		Ok(()),
+		)
+		.is_ok(),
+		true,
 	);
 
 	// The transactions share an identical kernel.

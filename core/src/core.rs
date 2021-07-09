@@ -18,6 +18,7 @@ pub mod block;
 pub mod block_sums;
 pub mod committed;
 pub mod compact_block;
+pub mod error;
 pub mod hash;
 pub mod id;
 pub mod merkle_proof;

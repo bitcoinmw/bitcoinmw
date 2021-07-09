@@ -154,9 +154,10 @@ fn test_nrd_kernel_relative_height() -> Result<(), PoolError> {
 	assert_eq!(pool.stempool.size(), 1);
 
 	// Confirm we cannot add tx2 to stempool while tx1 is in there (duplicate NRD kernels).
+	let res = pool.add_to_pool(test_source(), tx2.clone(), true, &header);
 	assert_eq!(
-		pool.add_to_pool(test_source(), tx2.clone(), true, &header),
-		Err(PoolError::NRDKernelRelativeHeight)
+		format!("{:?}", res,).contains("InvalidNrdRelativeHeight"),
+		true,
 	);
 
 	// Confirm we can successfully add tx1 with NRD kernel to txpool,
@@ -169,15 +170,17 @@ fn test_nrd_kernel_relative_height() -> Result<(), PoolError> {
 	assert_eq!(pool.stempool.size(), 0);
 
 	// Confirm we cannot add tx2 to stempool while tx1 is in txpool (duplicate NRD kernels).
+	let res = pool.add_to_pool(test_source(), tx2.clone(), true, &header);
 	assert_eq!(
-		pool.add_to_pool(test_source(), tx2.clone(), true, &header),
-		Err(PoolError::NRDKernelRelativeHeight)
+		format!("{:?}", res,).contains("InvalidNrdRelativeHeight"),
+		true,
 	);
 
 	// Confirm we cannot add tx2 to txpool while tx1 is in there (duplicate NRD kernels).
+	let res = pool.add_to_pool(test_source(), tx2.clone(), false, &header);
 	assert_eq!(
-		pool.add_to_pool(test_source(), tx2.clone(), false, &header),
-		Err(PoolError::NRDKernelRelativeHeight)
+		format!("{:?}", res,).contains("InvalidNrdRelativeHeight"),
+		true,
 	);
 
 	assert_eq!(pool.total_size(), 1);
@@ -226,9 +229,10 @@ fn test_nrd_kernel_relative_height() -> Result<(), PoolError> {
 	assert_eq!(pool.stempool.size(), 1);
 
 	// Confirm we cannot yet add tx3 to stempool (NRD relative_height=1)
+	let res = pool.add_to_pool(test_source(), tx3.clone(), true, &header);
 	assert_eq!(
-		pool.add_to_pool(test_source(), tx3.clone(), true, &header),
-		Err(PoolError::NRDKernelRelativeHeight)
+		format!("{:?}", res,).contains("InvalidNrdRelativeHeight"),
+		true,
 	);
 
 	// Confirm we can now add tx2 to txpool with NRD relative_height rule met.
@@ -238,9 +242,10 @@ fn test_nrd_kernel_relative_height() -> Result<(), PoolError> {
 	);
 
 	// Confirm we cannot yet add tx3 to txpool (NRD relative_height=1)
+	let res = pool.add_to_pool(test_source(), tx3.clone(), false, &header);
 	assert_eq!(
-		pool.add_to_pool(test_source(), tx3.clone(), false, &header),
-		Err(PoolError::NRDKernelRelativeHeight)
+		format!("{:?}", res,).contains("InvalidNrdRelativeHeight"),
+		true,
 	);
 
 	assert_eq!(pool.total_size(), 1);

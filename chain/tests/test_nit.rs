@@ -415,8 +415,9 @@ fn test_nit() -> Result<(), Error> {
 		// txn is valid because input_signatures are only validated on the block level
 		// also need to make sure they are validated by the transaction pool as well
 		assert_eq!(
-			tx2.validate(Weighting::AsTransaction, verifier_cache, 0, None, None),
-			Ok(()),
+			tx2.validate(Weighting::AsTransaction, verifier_cache, 0, None, None)
+				.is_ok(),
+			true,
 		);
 
 		// try in a block

@@ -213,7 +213,7 @@ impl TxSource {
 pub enum PoolError {
 	/// An invalid pool entry caused by underlying tx validation error
 	#[fail(display = "Invalid Tx {}", _0)]
-	InvalidTx(transaction::Error),
+	InvalidTx(String),
 	/// An invalid pool entry caused by underlying block validation error
 	#[fail(display = "Invalid Block {}", _0)]
 	InvalidBlock(block::Error),
@@ -268,10 +268,7 @@ pub enum PoolError {
 
 impl From<transaction::Error> for PoolError {
 	fn from(e: transaction::Error) -> PoolError {
-		match e {
-			transaction::Error::InvalidNRDRelativeHeight => PoolError::NRDKernelRelativeHeight,
-			e @ _ => PoolError::InvalidTx(e),
-		}
+		PoolError::InvalidTx(format!("{:?}", e))
 	}
 }
 

@@ -33,7 +33,6 @@ use bmw_utxo::utxo_data::UtxoData;
 use chrono::Duration;
 use grin_core as core;
 use grin_core::address::Address;
-use grin_core::core::transaction::Error::IncorrectSignature;
 use grin_core::core::Inputs;
 use grin_core::core::RedeemScript;
 use grin_core::core::TransactionBody;
@@ -305,8 +304,12 @@ fn remove_coinbase_output_flag() {
 	// TODO: test should be updated to manually generate the r_sig such that
 	// the CoinbaseSumMismatch error occurs.
 	assert_eq!(
-		b.validate(&BlindingFactor::zero(), verifier_cache(), None),
-		Err(Error::Transaction(IncorrectSignature))
+		format!(
+			"{:?}",
+			b.validate(&BlindingFactor::zero(), verifier_cache(), None)
+		)
+		.contains("IncorrectSignature"),
+		true,
 	);
 }
 
@@ -336,8 +339,9 @@ fn remove_coinbase_kernel_flag() {
 	// Also results in the block no longer validating correctly
 	// because the message being signed on each tx kernel includes the kernel features.
 	assert_eq!(
-		b.validate(&BlindingFactor::zero(), verifier_cache(), None),
-		Err(Error::Transaction(transaction::Error::IncorrectSignature))
+		b.validate(&BlindingFactor::zero(), verifier_cache(), None)
+			.is_err(),
+		true,
 	);
 }
 
@@ -747,10 +751,14 @@ fn same_amount_outputs_copy_range_proof() {
 
 	// block should have been automatically compacted (including reward
 	// output) and should still be valid
-	match b.validate(&BlindingFactor::zero(), verifier_cache(), None) {
-		Err(Error::Transaction(transaction::Error::Secp(secp::Error::InvalidRangeProof))) => {}
-		_ => panic!("Bad range proof should be invalid"),
-	}
+	assert_eq!(
+		format!(
+			"{:?}",
+			b.validate(&BlindingFactor::zero(), verifier_cache(), None)
+		)
+		.contains("InvalidRangeProof"),
+		true
+	);
 }
 
 // Swap a range proof with the right private key but wrong amount
@@ -792,10 +800,14 @@ fn wrong_amount_range_proof() {
 
 	// block should have been automatically compacted (including reward
 	// output) and should still be valid
-	match b.validate(&BlindingFactor::zero(), verifier_cache(), None) {
-		Err(Error::Transaction(transaction::Error::Secp(secp::Error::InvalidRangeProof))) => {}
-		_ => panic!("Bad range proof should be invalid"),
-	}
+	assert_eq!(
+		format!(
+			"{:?}",
+			b.validate(&BlindingFactor::zero(), verifier_cache(), None)
+		)
+		.contains("InvalidRangeProof"),
+		true
+	);
 }
 
 #[test]
@@ -877,14 +889,18 @@ fn test_verify_cut_through() -> Result<(), Error> {
 
 	// The block should fail validation due to cut-through.
 	assert_eq!(
-		block.validate(&BlindingFactor::zero(), verifier_cache(), None),
-		Err(Error::Transaction(transaction::Error::CutThrough))
+		format!(
+			"{:?}",
+			block.validate(&BlindingFactor::zero(), verifier_cache(), None)
+		)
+		.contains("CutThrough"),
+		true,
 	);
 
 	// The block should fail lightweight "read" validation due to cut-through.
 	assert_eq!(
-		block.validate_read(),
-		Err(Error::Transaction(transaction::Error::CutThrough))
+		format!("{:?}", block.validate_read()).contains("CutThrough"),
+		true,
 	);
 
 	// Apply cut-through to eliminate the offending input and output.
@@ -924,12 +940,12 @@ fn do_btc_kernel_test(
 		let mut data = [0 as u8; 520];
 		let redeem_string = redeem_script.unwrap();
 		if redeem_string.len() > 520 {
-			return Err(Error::Transaction(transaction::Error::InvalidBTCClaim));
+			return Err(Error::Transaction("Invalid BTC Claim".to_string()));
 		}
 		let data_hex = hex::decode(redeem_string);
 
 		if data_hex.is_err() {
-			return Err(Error::Transaction(transaction::Error::InvalidBTCClaim));
+			return Err(Error::Transaction("Invalid BTC Claim".to_string()));
 		}
 
 		let mut data_hex = data_hex.unwrap();

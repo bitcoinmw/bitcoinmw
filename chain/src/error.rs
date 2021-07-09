@@ -154,7 +154,7 @@ pub enum ErrorKind {
 	GenesisBlockRequired,
 	/// Error from underlying tx handling
 	#[fail(display = "Transaction Validation Error: {:?}", _0)]
-	Transaction(transaction::Error),
+	Transaction(String),
 	/// Error from underlying block handling
 	#[fail(display = "Block Validation Error: {:?}", _0)]
 	Block(block::Error),
@@ -298,7 +298,7 @@ impl From<keychain::Error> for Error {
 impl From<transaction::Error> for Error {
 	fn from(error: transaction::Error) -> Error {
 		Error {
-			inner: Context::new(ErrorKind::Transaction(error)),
+			inner: Context::new(ErrorKind::Transaction(format!("{:?}", error))),
 		}
 	}
 }

@@ -14,6 +14,7 @@
 
 //! Transactions
 
+pub use crate::core::error::{Error, ErrorKind};
 use crate::core::hash::{DefaultHashable, Hash, Hashed};
 use crate::core::verifier_cache::VerifierCache;
 use crate::core::{committed, Committed};
@@ -44,9 +45,9 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::cmp::Ordering;
 use std::cmp::{max, min};
 use std::convert::{TryFrom, TryInto};
+use std::fmt;
 use std::fmt::Display;
 use std::sync::{Arc, Weak};
-use std::{error, fmt};
 use util::secp;
 use util::secp::key::PublicKey;
 use util::secp::pedersen::{Commitment, RangeProof};
@@ -135,9 +136,9 @@ impl TryFrom<u64> for FeeFields {
 
 	fn try_from(fee: u64) -> Result<Self, Self::Error> {
 		if fee == 0 {
-			Err(Error::InvalidFeeFields)
+			Err(ErrorKind::InvalidFeeFields.into())
 		} else if fee > FeeFields::FEE_MASK {
-			Err(Error::InvalidFeeFields)
+			Err(ErrorKind::InvalidFeeFields.into())
 		} else {
 			Ok(Self(fee))
 		}
@@ -178,11 +179,11 @@ impl FeeFields {
 	/// Checks both are valid (in range)
 	pub fn new(fee_shift: u64, fee: u64) -> Result<Self, Error> {
 		if fee == 0 {
-			Err(Error::InvalidFeeFields)
+			Err(ErrorKind::InvalidFeeFields.into())
 		} else if fee > FeeFields::FEE_MASK {
-			Err(Error::InvalidFeeFields)
+			Err(ErrorKind::InvalidFeeFields.into())
 		} else if fee_shift > FeeFields::FEE_SHIFT_MASK {
-			Err(Error::InvalidFeeFields)
+			Err(ErrorKind::InvalidFeeFields.into())
 		} else {
 			Ok(Self((fee_shift << FeeFields::FEE_BITS) | fee))
 		}
@@ -248,13 +249,13 @@ impl TryFrom<u16> for NRDRelativeHeight {
 
 	fn try_from(height: u16) -> Result<Self, Self::Error> {
 		if height == 0 {
-			Err(Error::InvalidNRDRelativeHeight)
+			Err(ErrorKind::InvalidNRDRelativeHeight.into())
 		} else if height
 			> NRDRelativeHeight::MAX
 				.try_into()
 				.expect("WEEK_HEIGHT const should fit in u16")
 		{
-			Err(Error::InvalidNRDRelativeHeight)
+			Err(ErrorKind::InvalidNRDRelativeHeight.into())
 		} else {
 			Ok(Self(height))
 		}
@@ -265,7 +266,10 @@ impl TryFrom<u64> for NRDRelativeHeight {
 	type Error = Error;
 
 	fn try_from(height: u64) -> Result<Self, Self::Error> {
-		Self::try_from(u16::try_from(height).map_err(|_| Error::InvalidNRDRelativeHeight)?)
+		Self::try_from(u16::try_from(height).map_err(|_| {
+			let error: Error = ErrorKind::InvalidNRDRelativeHeight.into();
+			error
+		})?)
 	}
 }
 
@@ -605,7 +609,7 @@ pub fn build_btc_init_kernel_feature(
 		// use specified recovery_byte
 		let recovery_byte = btc_recovery_bytes.get(i);
 		if recovery_byte.is_none() {
-			return Err(Error::RecoveryByteNotFound);
+			return Err(ErrorKind::RecoveryByteNotFound.into());
 		}
 		let recovery_byte = *recovery_byte.unwrap();
 		signature[0] = recovery_byte;
@@ -922,129 +926,6 @@ impl Readable for KernelFeatures {
 	}
 }
 
-/// Errors thrown by Transaction validation
-#[derive(Clone, Eq, Debug, PartialEq, Serialize, Deserialize)]
-pub enum Error {
-	/// Underlying Secp256k1 error (signature validation or invalid public key
-	/// typically)
-	Secp(secp::Error),
-	/// Underlying keychain related error
-	Keychain(keychain::Error),
-	/// The sum of output minus input commitments does not
-	/// match the sum of kernel commitments
-	KernelSumMismatch,
-	/// Restrict tx total weight.
-	TooHeavy,
-	/// Error originating from an invalid lock-height
-	LockHeight(u64),
-	/// Range proof validation error
-	RangeProof,
-	/// Error originating from an invalid Merkle proof
-	MerkleProof,
-	/// Returns if the value hidden within the a RangeProof message isn't
-	/// repeated 3 times, indicating it's incorrect
-	InvalidProofMessage,
-	/// Error when verifying kernel sums via committed trait.
-	Committed(committed::Error),
-	/// Validation error relating to cut-through (tx is spending its own
-	/// output).
-	CutThrough,
-	/// Validation error relating to output features.
-	/// It is invalid for a transaction to contain a coinbase output, for example.
-	InvalidOutputFeatures,
-	/// Validation error relating to kernel features.
-	/// It is invalid for a transaction to contain a coinbase kernel, for example.
-	InvalidKernelFeatures,
-	/// There are more than one notary kernels in this txn.
-	MultipleNotaryKernelFeatures,
-	/// Maximum burn of 100,000 BMWs is exceeded.
-	MaxBurnExceeded,
-	/// RecoveryByte Not found for this BTCKernel.
-	RecoveryByteNotFound,
-	/// feeshift is limited to 4 bits and fee must be positive and fit in 40 bits.
-	InvalidFeeFields,
-	/// NRD kernel relative height is limited to 1 week duration and must be greater than 0.
-	InvalidNRDRelativeHeight,
-	/// Signature verification error.
-	IncorrectSignature,
-	/// Underlying serialization error.
-	Serialization(ser::Error),
-	/// UtxoData error
-	UtxoDataError(String),
-	/// The type of Kernel Features was not expected here.
-	UnexpectedKernelFeaturesType,
-	/// The BTCSignature was invalid
-	InvalidBTCSignature,
-	/// Redeem Script is not found in the claim db
-	InvalidRedeemScript,
-	/// Invalid BTC Claim
-	InvalidBTCClaim,
-	/// No BTC Signature
-	NoSignature,
-	/// Too Many Keys
-	TooManyKeys,
-	/// The btc address was invalid
-	InvalidBTCAddress,
-	/// No utxo_data
-	NoUtxoData,
-	/// Invalid witness address
-	InvalidWitnessAddress(String),
-	/// Other
-	Other(String),
-}
-
-impl error::Error for Error {
-	fn description(&self) -> &str {
-		match *self {
-			_ => "transaction error",
-		}
-	}
-}
-
-impl fmt::Display for Error {
-	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		match *self {
-			_ => write!(f, "some kind of transaction error"),
-		}
-	}
-}
-
-impl From<ser::Error> for Error {
-	fn from(e: ser::Error) -> Error {
-		Error::Serialization(e)
-	}
-}
-
-impl From<bmw_utxo::error::Error> for Error {
-	fn from(e: bmw_utxo::error::Error) -> Error {
-		Error::UtxoDataError(format!("{:?}", e))
-	}
-}
-
-impl From<secp::Error> for Error {
-	fn from(e: secp::Error) -> Error {
-		Error::Secp(e)
-	}
-}
-
-impl From<bitcoin::util::address::Error> for Error {
-	fn from(e: bitcoin::util::address::Error) -> Error {
-		Error::InvalidWitnessAddress(e.to_string())
-	}
-}
-
-impl From<keychain::Error> for Error {
-	fn from(e: keychain::Error) -> Error {
-		Error::Keychain(e)
-	}
-}
-
-impl From<committed::Error> for Error {
-	fn from(e: committed::Error) -> Error {
-		Error::Committed(e)
-	}
-}
-
 /// A proof that a transaction sums to zero. Includes both the transaction's
 /// Pedersen commitment and the signature, that guarantees that the commitments
 /// amount to zero.
@@ -1199,7 +1080,7 @@ impl TxKernel {
 			Some(&pubkey),
 			false,
 		) {
-			return Err(Error::IncorrectSignature);
+			return Err(ErrorKind::IncorrectSignature.into());
 		}
 		Ok(())
 	}
@@ -1219,7 +1100,7 @@ impl TxKernel {
 			} => {
 				if redeem_script.is_some() {
 					if *address_type != P2SH && *address_type != P2WSH && *address_type != P2SHWSH {
-						return Err(Error::InvalidBTCClaim);
+						return Err(ErrorKind::InvalidBTCClaim.into());
 					};
 					self.process_redeem(
 						utxo_data,
@@ -1256,9 +1137,10 @@ impl TxKernel {
 		let msg = self.get_message_from_challenge(challenge_str);
 		// get pubkey from recoverable signature
 		let mut pubkey = BitcoinPublicKey {
-			key: secp
-				.recover(&msg, &rec_sig)
-				.map_err(|_| Error::InvalidBTCSignature)?,
+			key: secp.recover(&msg, &rec_sig).map_err(|_| {
+				let error: Error = ErrorKind::InvalidBTCSignature.into();
+				error
+			})?,
 			compressed: ((btc_recovery_byte - 27) & 4) != 0,
 		};
 
@@ -1274,12 +1156,12 @@ impl TxKernel {
 			pubkey.compressed = true;
 			Address::p2wpkh(&pubkey, Bitcoin)
 		} else {
-			return Err(Error::InvalidBTCAddress);
+			return Err(ErrorKind::InvalidBTCAddress.into());
 		};
 
 		// if there's an error doing that, throw error.
 		if address_rec.is_err() {
-			return Err(Error::InvalidBTCAddress);
+			return Err(ErrorKind::InvalidBTCAddress.into());
 		}
 
 		let address_rec = address_rec.unwrap();
@@ -1287,7 +1169,7 @@ impl TxKernel {
 		// if the recovered address doesn't match the specified adress,
 		// throw an error
 		if format!("{}", address_rec) != address {
-			return Err(Error::InvalidBTCSignature);
+			return Err(ErrorKind::InvalidBTCSignature.into());
 		}
 
 		// otherwise, success
@@ -1303,36 +1185,38 @@ impl TxKernel {
 		index: &u32,
 	) -> Result<(), Error> {
 		if utxo_data.is_none() {
-			return Err(Error::NoUtxoData);
+			return Err(ErrorKind::NoUtxoData.into());
 		}
 		let utxo_data = utxo_data.unwrap().upgrade().unwrap();
 		let utxo_data = utxo_data.read();
 
 		// Something's wrong if there's no redeem and there's more than 1 sig.
 		if btc_signatures.len() != 1 {
-			return Err(Error::InvalidBTCClaim);
+			return Err(ErrorKind::InvalidBTCClaim.into());
 		}
 
 		// get the btc_signature (only the first one.
 		let btc_signature = btc_signatures.get(0);
 		// if it's none, throw error
 		if btc_signature.is_none() {
-			return Err(Error::InvalidBTCSignature);
+			return Err(ErrorKind::InvalidBTCSignature.into());
 		}
 		let btc_signature = btc_signature.unwrap();
 
 		// first byte is the recovery byte.
 		let btc_recovery_byte = btc_signature.signature[0];
 		// build a recoverable signature.
-		let (_, rec_sig) = get_recoverable_signature(self.features.clone(), 0)
-			.map_err(|_| Error::InvalidBTCSignature)?;
+		let (_, rec_sig) = get_recoverable_signature(self.features.clone(), 0).map_err(|_| {
+			let error: Error = ErrorKind::InvalidBTCSignature.into();
+			error
+		})?;
 
 		let challenge_str = self.get_challenge();
 
 		let address = (*utxo_data).get_address(*index);
 		// if the address is not found, throw an error.
 		if !address.is_ok() {
-			return Err(Error::InvalidBTCSignature);
+			return Err(ErrorKind::InvalidBTCSignature.into());
 		}
 
 		let address = address.unwrap();
@@ -1362,7 +1246,7 @@ impl TxKernel {
 		address_type: u8,
 	) -> Result<(), Error> {
 		if utxo_data.is_none() {
-			return Err(Error::NoUtxoData);
+			return Err(ErrorKind::NoUtxoData.into());
 		}
 		let utxo_data = utxo_data.unwrap().upgrade().unwrap();
 		let utxo_data = utxo_data.read();
@@ -1389,20 +1273,20 @@ impl TxKernel {
 			is_witness = true;
 			Address::p2wsh(&script, Bitcoin)
 		} else {
-			return Err(Error::InvalidBTCClaim);
+			return Err(ErrorKind::InvalidBTCClaim.into());
 		};
 
 		// is it found in our utxo_data?
 		let index_found = (*utxo_data).get_index(format!("{}", address).to_string());
 
 		if index_found.is_err() {
-			return Err(Error::InvalidRedeemScript);
+			return Err(ErrorKind::InvalidRedeemScript.into());
 		}
 
 		let index_found = index_found.unwrap();
 		// if the index is not the one that was specified in the kernel, throw an error.
 		if index_found != *index {
-			return Err(Error::InvalidBTCClaim);
+			return Err(ErrorKind::InvalidBTCClaim.into());
 		}
 
 		// iterate through the script to count the number of keys required to process it.
@@ -1419,7 +1303,7 @@ impl TxKernel {
 
 			// if next is an error throw InvalidBTCClaim
 			if next.is_err() {
-				return Err(Error::InvalidBTCClaim);
+				return Err(ErrorKind::InvalidBTCClaim.into());
 			}
 
 			let next = next.unwrap();
@@ -1434,7 +1318,7 @@ impl TxKernel {
 
 		// if there's more signatures than needed, throw error.
 		if btc_signatures.len() > key_count {
-			return Err(Error::TooManyKeys);
+			return Err(ErrorKind::TooManyKeys.into());
 		}
 
 		// obtain the challenge message.
@@ -1453,7 +1337,7 @@ impl TxKernel {
 			let next = next.unwrap();
 
 			if next.is_err() {
-				return Err(Error::InvalidBTCClaim);
+				return Err(ErrorKind::InvalidBTCClaim.into());
 			}
 
 			let next = next.unwrap();
@@ -1463,7 +1347,7 @@ impl TxKernel {
 					if !last_type_is_op {
 						// check the verification
 						if cur_verified < last_op {
-							return Err(Error::NoSignature);
+							return Err(ErrorKind::NoSignature.into());
 						}
 					}
 
@@ -1514,7 +1398,7 @@ impl TxKernel {
 					// get the pubkey
 					let pubkey = bitcoin::PublicKey::from_slice(data);
 					if pubkey.is_err() {
-						return Err(Error::InvalidBTCClaim);
+						return Err(ErrorKind::InvalidBTCClaim.into());
 					}
 					let pubkey = pubkey.unwrap();
 
@@ -1528,8 +1412,12 @@ impl TxKernel {
 						};
 						// check each signature until a valid one is found
 						let (rec_byte, sig) =
-							get_recoverable_signature(self.features.clone(), count)
-								.map_err(|_| Error::InvalidBTCSignature)?;
+							get_recoverable_signature(self.features.clone(), count).map_err(
+								|_| {
+									let error: Error = ErrorKind::InvalidBTCSignature.into();
+									error
+								},
+							)?;
 
 						let challenge_str = self.get_challenge();
 						let verify = self
@@ -1547,7 +1435,7 @@ impl TxKernel {
 					// last_op == 0 means something other than an OP_PUSHNUM_N, we don't know what
 					// to do, so just require all signatures in this case.
 					if last_op == 0 && cur_verified == 0 {
-						return Err(Error::NoSignature);
+						return Err(ErrorKind::NoSignature.into());
 					}
 				}
 			}
@@ -1573,7 +1461,7 @@ impl TxKernel {
 		}
 
 		if !aggsig::verify_batch(&secp, &sigs, &msgs, &pubkeys) {
-			return Err(Error::IncorrectSignature);
+			return Err(ErrorKind::IncorrectSignature.into());
 		}
 
 		Ok(())
@@ -1958,7 +1846,7 @@ impl TransactionBody {
 		};
 
 		if self.weight() > max_weight {
-			return Err(Error::TooHeavy);
+			return Err(ErrorKind::TooHeavy.into());
 		}
 		Ok(())
 	}
@@ -1989,7 +1877,7 @@ impl TransactionBody {
 		if original_count == dedup_count {
 			Ok(())
 		} else {
-			Err(Error::InvalidNRDRelativeHeight)
+			Err(ErrorKind::InvalidNRDRelativeHeight.into())
 		}
 	}
 
@@ -2019,7 +1907,7 @@ impl TransactionBody {
 		let commits = self.inputs_outputs_committed();
 		for pair in commits.windows(2) {
 			if pair[0] == pair[1] {
-				return Err(Error::CutThrough);
+				return Err(ErrorKind::CutThrough.into());
 			}
 		}
 		Ok(())
@@ -2037,7 +1925,7 @@ impl TransactionBody {
 	// Verify we have no outputs tagged as COINBASE.
 	fn verify_output_features(&self) -> Result<(), Error> {
 		if self.outputs.iter().any(|x| x.is_coinbase()) {
-			return Err(Error::InvalidOutputFeatures);
+			return Err(ErrorKind::InvalidOutputFeatures.into());
 		}
 		Ok(())
 	}
@@ -2045,7 +1933,7 @@ impl TransactionBody {
 	// Verify we have no kernels tagged as COINBASE.
 	fn verify_kernel_features(&self) -> Result<(), Error> {
 		if self.kernels.iter().any(|x| x.is_coinbase()) {
-			return Err(Error::InvalidKernelFeatures);
+			return Err(ErrorKind::InvalidKernelFeatures.into());
 		}
 		Ok(())
 	}
@@ -2069,7 +1957,7 @@ impl TransactionBody {
 			match kernel.features {
 				KernelFeatures::Burn { amount, .. } => {
 					if amount > 100_000_000_000_000 {
-						return Err(Error::MaxBurnExceeded);
+						return Err(ErrorKind::MaxBurnExceeded.into());
 					}
 				}
 				_ => {}
@@ -2480,12 +2368,12 @@ where
 
 	// Check we have no duplicate inputs after cut-through.
 	if inputs.windows(2).any(|pair| pair[0] == pair[1]) {
-		return Err(Error::CutThrough);
+		return Err(ErrorKind::CutThrough.into());
 	}
 
 	// Check we have no duplicate outputs after cut-through.
 	if outputs.windows(2).any(|pair| pair[0] == pair[1]) {
-		return Err(Error::CutThrough);
+		return Err(ErrorKind::CutThrough.into());
 	}
 
 	Ok((inputs, outputs, inputs_cut, outputs_cut))
@@ -2753,26 +2641,6 @@ impl Writeable for CommitWrapper {
 	}
 }
 
-/*
-impl From<Inputs> for Vec<CommitWrapper> {
-	fn from(inputs: Inputs) -> Self {
-		match inputs {
-			Inputs::CommitOnly(inputs) => inputs,
-		}
-	}
-}
-*/
-
-/*
-impl From<&Inputs> for Vec<CommitWrapper> {
-	fn from(inputs: &Inputs) -> Self {
-		match inputs {
-			Inputs::CommitOnly(inputs) => inputs.clone(),
-		}
-	}
-}
-*/
-
 impl CommitWrapper {
 	/// Wrapped commitment.
 	pub fn commitment(&self) -> Commitment {
@@ -2794,7 +2662,7 @@ impl CommitWrapper {
 				pubkeys.push(rnp.onetime_pubkey.clone());
 				msgs.push(rnp.input_sig_msg(*h));
 			} else {
-				return Err(Error::IncorrectSignature);
+				return Err(ErrorKind::IncorrectSignature.into());
 			}
 		}
 
@@ -2802,7 +2670,7 @@ impl CommitWrapper {
 		let secp = secp.lock();
 
 		if !aggsig::verify_batch(&secp, &sigs, &msgs, &pubkeys) {
-			return Err(Error::IncorrectSignature);
+			return Err(ErrorKind::IncorrectSignature.into());
 		}
 
 		Ok(())
@@ -3291,7 +3159,7 @@ impl OutputIdentifier {
 		let secp = static_secp_instance();
 		let secp = secp.lock();
 		if !aggsig::verify_batch(&secp, &sigs, &msgs, &pubkeys) {
-			return Err(Error::IncorrectSignature);
+			return Err(ErrorKind::IncorrectSignature.into());
 		}
 
 		Ok(())
@@ -3561,32 +3429,56 @@ mod test {
 		kernel.excess_sig = excess_sig;
 
 		// Check the signature verifies.
-		assert_eq!(kernel.verify(), Ok(()));
+		assert_eq!(kernel.verify().is_ok(), true);
 
 		// Modify the fee and check signature no longer verifies.
 		kernel.features = KernelFeatures::NoRecentDuplicate {
 			fee: 9.into(),
 			relative_height: NRDRelativeHeight(100),
 		};
-		assert_eq!(kernel.verify(), Err(Error::IncorrectSignature));
+
+		let kernel_verify = kernel.verify();
+		match kernel_verify {
+			Ok(_) => panic!("should not be ok"),
+			Err(error) => match error.inner.get_context() {
+				ErrorKind::IncorrectSignature => {}
+				_ => panic!("Should be incorrect signature"),
+			},
+		}
 
 		// Modify the relative_height and check signature no longer verifies.
 		kernel.features = KernelFeatures::NoRecentDuplicate {
 			fee: 10.into(),
 			relative_height: NRDRelativeHeight(101),
 		};
-		assert_eq!(kernel.verify(), Err(Error::IncorrectSignature));
+
+		let kernel_verify = kernel.verify();
+		match kernel_verify {
+			Ok(_) => panic!("should not be ok"),
+			Err(error) => match error.inner.get_context() {
+				ErrorKind::IncorrectSignature => {}
+				_ => panic!("Should be incorrect signature"),
+			},
+		}
 
 		// Swap the features out for something different and check signature no longer verifies.
 		kernel.features = KernelFeatures::Plain { fee: 10.into() };
-		assert_eq!(kernel.verify(), Err(Error::IncorrectSignature));
+
+		let kernel_verify = kernel.verify();
+		match kernel_verify {
+			Ok(_) => panic!("should not be ok"),
+			Err(error) => match error.inner.get_context() {
+				ErrorKind::IncorrectSignature => {}
+				_ => panic!("Should be incorrect signature"),
+			},
+		}
 
 		// Check signature verifies if we use the original features.
 		kernel.features = KernelFeatures::NoRecentDuplicate {
 			fee: 10.into(),
 			relative_height: NRDRelativeHeight(100),
 		};
-		assert_eq!(kernel.verify(), Ok(()));
+		assert_eq!(kernel.verify().is_ok(), true);
 	}
 
 	#[test]

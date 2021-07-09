@@ -203,14 +203,17 @@ where
 
 		// Make sure the transaction is valid before anything else.
 		// Validate tx accounting for max tx weight.
-		tx.validate(
+		let res = tx.validate(
 			Weighting::AsTransaction,
 			self.verifier_cache.clone(),
 			header.height,
 			self.blockchain.get_utxo_data()?,
 			None,
-		)
-		.map_err(PoolError::InvalidTx)?;
+		);
+
+		if res.is_err() {
+			return Err(PoolError::InvalidTx(format!("{:?}", res)));
+		}
 
 		// Check the tx lock_time is valid based on current chain state.
 		self.blockchain.verify_tx_lock_height(tx)?;

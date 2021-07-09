@@ -16,7 +16,7 @@
 
 pub mod common;
 use crate::common::tx1i10_v2_compatible;
-use crate::core::core::transaction::{self, Error};
+use crate::core::core::transaction::{self, Error, ErrorKind};
 use crate::core::core::verifier_cache::{LruVerifierCache, VerifierCache};
 use crate::core::core::TransactionBody;
 use crate::core::core::{
@@ -166,12 +166,16 @@ fn test_verify_cut_through() -> Result<(), Error> {
 			height,
 			None,
 			None,
-		),
-		Err(Error::CutThrough),
+		)
+		.is_err(),
+		true,
 	);
 
 	// Transaction should fail lightweight "read" validation due to cut-through.
-	assert_eq!(tx.validate_read(), Err(Error::CutThrough));
+	assert_eq!(
+		format!("{:?}", tx.validate_read()).contains("CutThrough"),
+		true
+	);
 
 	// Apply cut-through to eliminate the offending input and output.
 	let mut inputs: Vec<_> = tx.inputs().into();
@@ -248,7 +252,14 @@ fn test_fee_fields() -> Result<(), Error> {
 
 	assert_eq!(tx.fee(hf4_height), 147);
 	assert_eq!(tx.shifted_fee(hf4_height), 36);
-	assert_eq!(tx.aggregate_fee_fields(hf4_height), FeeFields::new(2, 147));
+	assert_eq!(
+		tx.aggregate_fee_fields(hf4_height).unwrap().fee(0),
+		FeeFields::new(2, 147).unwrap().fee(0)
+	);
+	assert_eq!(
+		tx.aggregate_fee_fields(hf4_height).unwrap().fee_shift(0),
+		FeeFields::new(2, 147).unwrap().fee_shift(0)
+	);
 	assert_eq!(tx_fee(1, 1, 3), 15_500_000);
 
 	Ok(())
@@ -326,12 +337,12 @@ fn do_btc_kernel_test(
 		let mut data = [0 as u8; 520];
 		let redeem_string = redeem_script.unwrap();
 		if redeem_string.len() > 520 {
-			return Err(Error::InvalidBTCClaim);
+			return Err(ErrorKind::InvalidBTCClaim.into());
 		}
 		let data_hex = hex::decode(redeem_string);
 
 		if data_hex.is_err() {
-			return Err(Error::InvalidBTCClaim);
+			return Err(ErrorKind::InvalidBTCClaim.into());
 		}
 
 		let mut data_hex = data_hex.unwrap();

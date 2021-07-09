@@ -1197,10 +1197,7 @@ fn test_overflow_cached_rangeproof() {
 			None,
 			None,
 		);
-		assert_eq!(
-			res,
-			Err(crate::Error::Secp(util::secp::Error::InvalidRangeProof))
-		);
+		assert_eq!(format!("{:?}", res).contains("InvalidRangeProof"), true);
 	}
 	clean_output_dir(".grin_overflow");
 }

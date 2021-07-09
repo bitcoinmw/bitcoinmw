@@ -27,6 +27,7 @@ use self::core::global;
 use self::core::libtx::{build, reward, ProofBuilder};
 use self::core::pow;
 use self::keychain::{BlindingFactor, Keychain};
+use self::pool::types::PoolError::InvalidTx;
 use self::pool::types::*;
 use self::pool::TransactionPool;
 use self::util::RwLock;
@@ -253,7 +254,7 @@ impl BlockChain for ChainAdapter {
 
 	fn validate_tx(&self, tx: &Transaction) -> Result<(), pool::PoolError> {
 		self.chain.validate_tx(tx).map_err(|e| match e.kind() {
-			chain::ErrorKind::Transaction(txe) => txe.into(),
+			chain::ErrorKind::Transaction(txe) => InvalidTx(txe),
 			chain::ErrorKind::NRDRelativeHeight => PoolError::NRDKernelRelativeHeight,
 			_ => PoolError::Other(format!("failed to validate tx: {:?}", e).into()),
 		})

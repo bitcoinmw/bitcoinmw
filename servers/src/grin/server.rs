@@ -61,6 +61,7 @@ use crate::tor::process::TorProcess;
 use crate::util::file::get_first_line;
 use crate::util::{RwLock, StopState};
 use fs2::FileExt;
+use futures::channel::oneshot;
 use grin_util::logger::LogEntry;
 use grin_util::secp::Secp256k1;
 use std::sync::mpsc::{Receiver, Sender};
@@ -110,6 +111,7 @@ impl Server {
 		logs_rx: Option<mpsc::Receiver<LogEntry>>,
 		mut info_callback: F,
 		stop_state: Option<Arc<StopState>>,
+		api_chan: &'static mut (oneshot::Sender<()>, oneshot::Receiver<()>),
 	) -> Result<(), Error>
 	where
 		F: FnMut(Server, Option<mpsc::Receiver<LogEntry>>),
@@ -117,7 +119,7 @@ impl Server {
 		let mining_config = config.stratum_mining_config.clone();
 		let enable_test_miner = config.run_test_miner;
 		let test_miner_wallet_url = config.test_miner_wallet_url.clone();
-		let serv = Server::new(config, stop_state)?;
+		let serv = Server::new(config, stop_state, api_chan)?;
 
 		if let Some(c) = mining_config {
 			let enable_stratum_server = c.enable_stratum_server;
@@ -201,7 +203,11 @@ Wrong network! {:?} != {:?}",
 	}
 
 	/// Instantiates a new server associated with the provided future reactor.
-	pub fn new(config: ServerConfig, stop_state: Option<Arc<StopState>>) -> Result<Server, Error> {
+	pub fn new(
+		config: ServerConfig,
+		stop_state: Option<Arc<StopState>>,
+		api_chan: &'static mut (oneshot::Sender<()>, oneshot::Receiver<()>),
+	) -> Result<Server, Error> {
 		// Obtain our lock_file or fail immediately with an error.
 		let lock_file = Server::one_grin_at_a_time(&config)?;
 
@@ -463,6 +469,8 @@ Wrong network! {:?} != {:?}",
 			foreign_api_secret,
 			tls_conf,
 			utxo_data.clone(),
+			api_chan,
+			stop_state.clone(),
 		)?;
 
 		info!("Starting dandelion monitor: {}", &config.api_http_addr);

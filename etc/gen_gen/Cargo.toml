@@ -27,7 +27,6 @@ grin_chain = { path = "../../chain" }
 grin_core = { path = "../../core" }
 grin_keychain = { path = "../../keychain" }
 grin_p2p = { path = "../../p2p" }
-grin_servers = { path = "../../servers" }
 grin_util = { path = "../../util" }
 grin_store = { path = "../../store" }
 

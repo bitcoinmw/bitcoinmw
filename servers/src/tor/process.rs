@@ -314,7 +314,7 @@ impl TorProcess {
 							return Ok(self);
 						}
 						let delay = Self::timenow() - status.last;
-						if delay > 5_000 {
+						if delay > 10_000 {
 							status.status = 0;
 							self.kill().unwrap_or(());
 							start_tor = true;

@@ -21,7 +21,6 @@ use lmdb_zero as lmdb;
 use lmdb_zero::traits::CreateCursor;
 use lmdb_zero::LmdbResultExt;
 
-use crate::core::global;
 use crate::core::ser::{self, ProtocolVersion};
 use crate::util::RwLock;
 
@@ -100,6 +99,7 @@ impl Store {
 		env_name: Option<&str>,
 		db_name: Option<&str>,
 		max_readers: Option<u32>,
+		is_production_mode: bool,
 	) -> Result<Store, Error> {
 		let name = match env_name {
 			Some(n) => n.to_owned(),
@@ -124,7 +124,7 @@ impl Store {
 			env_builder.set_maxreaders(max_readers)?;
 		}
 
-		let alloc_chunk_size = match global::is_production_mode() {
+		let alloc_chunk_size = match is_production_mode {
 			true => ALLOC_CHUNK_SIZE_DEFAULT,
 			false => ALLOC_CHUNK_SIZE_DEFAULT_TEST,
 		};
@@ -153,8 +153,8 @@ impl Store {
 
 	/// Construct a new store using a specific protocol version.
 	/// Permits access to the db with legacy protocol versions for db migrations.
-	pub fn with_version(&self, version: ProtocolVersion) -> Store {
-		let alloc_chunk_size = match global::is_production_mode() {
+	pub fn with_version(&self, version: ProtocolVersion, is_production_mode: bool) -> Store {
+		let alloc_chunk_size = match is_production_mode {
 			true => ALLOC_CHUNK_SIZE_DEFAULT,
 			false => ALLOC_CHUNK_SIZE_DEFAULT_TEST,
 		};

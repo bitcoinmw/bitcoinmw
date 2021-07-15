@@ -17,6 +17,7 @@
 use crate::core::consensus::HeaderInfo;
 use crate::core::core::hash::{Hash, Hashed};
 use crate::core::core::{Block, BlockHeader, BlockSums};
+use crate::core::global;
 use crate::core::pow::Difficulty;
 use crate::core::ser::{ProtocolVersion, Readable, Writeable};
 use crate::linked_list::MultiIndex;
@@ -59,7 +60,13 @@ pub struct ChainStore {
 impl ChainStore {
 	/// Create new chain store
 	pub fn new(db_root: &str) -> Result<ChainStore, Error> {
-		let db = store::Store::new(db_root, None, Some(STORE_SUBPATH), None)?;
+		let db = store::Store::new(
+			db_root,
+			None,
+			Some(STORE_SUBPATH),
+			None,
+			global::is_production_mode(),
+		)?;
 		Ok(ChainStore { db })
 	}
 

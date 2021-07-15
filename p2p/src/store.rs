@@ -18,6 +18,7 @@ use chrono::Utc;
 use num::FromPrimitive;
 use rand::prelude::*;
 
+use crate::core::global;
 use crate::core::ser::{self, Readable, Reader, Writeable, Writer};
 use crate::types::{Capabilities, PeerAddr, ReasonForBan};
 use grin_store::{self, option_to_not_found, to_key, Error};
@@ -115,7 +116,13 @@ pub struct PeerStore {
 impl PeerStore {
 	/// Instantiates a new peer store under the provided root path.
 	pub fn new(db_root: &str) -> Result<PeerStore, Error> {
-		let db = grin_store::Store::new(db_root, Some(DB_NAME), Some(STORE_SUBPATH), None)?;
+		let db = grin_store::Store::new(
+			db_root,
+			Some(DB_NAME),
+			Some(STORE_SUBPATH),
+			None,
+			global::is_production_mode(),
+		)?;
 		Ok(PeerStore { db: db })
 	}
 

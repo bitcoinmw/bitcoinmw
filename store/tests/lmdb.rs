@@ -70,7 +70,13 @@ fn test_exists() -> Result<(), store::Error> {
 	let test_dir = "target/test_exists";
 	setup(test_dir);
 
-	let store = store::Store::new(test_dir, Some("test1"), None, None)?;
+	let store = store::Store::new(
+		test_dir,
+		Some("test1"),
+		None,
+		None,
+		global::is_production_mode(),
+	)?;
 
 	let key = [0, 0, 0, 1];
 	let value = [1, 1, 1, 1];
@@ -99,7 +105,13 @@ fn test_iter() -> Result<(), store::Error> {
 	let test_dir = "target/test_iter";
 	setup(test_dir);
 
-	let store = store::Store::new(test_dir, Some("test1"), None, None)?;
+	let store = store::Store::new(
+		test_dir,
+		Some("test1"),
+		None,
+		None,
+		global::is_production_mode(),
+	)?;
 
 	let key = [0, 0, 0, 1];
 	let value = [1, 1, 1, 1];
@@ -138,7 +150,13 @@ fn lmdb_allocate() -> Result<(), store::Error> {
 	// Allocate more than the initial chunk, ensuring
 	// the DB resizes underneath
 	{
-		let store = store::Store::new(test_dir, Some("test1"), None, None)?;
+		let store = store::Store::new(
+			test_dir,
+			Some("test1"),
+			None,
+			None,
+			global::is_production_mode(),
+		)?;
 
 		for i in 0..WRITE_CHUNK_SIZE * 2 {
 			println!("Allocating chunk: {}", i);
@@ -155,7 +173,13 @@ fn lmdb_allocate() -> Result<(), store::Error> {
 	println!("***********************************");
 	// Open env again and keep adding
 	{
-		let store = store::Store::new(test_dir, Some("test1"), None, None)?;
+		let store = store::Store::new(
+			test_dir,
+			Some("test1"),
+			None,
+			None,
+			global::is_production_mode(),
+		)?;
 		for i in 0..WRITE_CHUNK_SIZE * 2 {
 			println!("Allocating chunk: {}", i);
 			let chunk = PhatChunkStruct::new();
